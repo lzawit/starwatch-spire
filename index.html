@@ -1,12 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-</head>
-<body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Starwatch Spire</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#090c20">
@@ -151,13 +143,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--ward);outline-o
 .secondary{font-size:1rem;padding:12px 18px;border-radius:12px;border:1px solid var(--line);background:var(--glass)}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>*{flex:1 1 auto}
-.chip{margin:0;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--glass);font-size:.88rem;line-height:1.4}
-.chip::before{content:"";flex:none;width:9px;height:9px;margin-top:.35em;border-radius:50%;background:var(--dim)}
-.chip[data-state="on"]{border-color:rgba(125,255,208,.4)}
-.chip[data-state="on"]::before{background:#7dffd0;box-shadow:0 0 10px #7dffd0}
-.chip[data-state="off"]{border-color:rgba(232,88,107,.45)}
-.chip[data-state="off"]::before{background:var(--vital)}
-.linkbtn{display:block;text-align:center;text-decoration:none;color:var(--parchment)}
 .fine{margin:0;color:var(--dim);font-size:.8rem;line-height:1.45}
 .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
 .stats div{border-top:1px solid var(--line);padding-top:8px;min-width:0}
@@ -228,9 +213,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--ward);outline-o
       <input type="checkbox" class="switch" id="optFlick">
     </label>
     <button class="primary" id="btnBegin">Begin the watch</button>
-    <p class="chip" id="motionChip" data-state="wait" role="status">Checking motion sensors…</p>
-    <a class="secondary linkbtn" id="openTab" href="#" target="_blank" rel="noopener" hidden>Open the game in its own tab</a>
-    <p class="fine" id="startNote">Aiming by moving the phone needs an https page. Without it you can still drag the view to look.</p>
+    <p class="fine" id="startNote">Motion aiming needs a phone and a secure (https) page. Without it, drag the view to look. On a computer: drag to look, keys 1–4 to cast.</p>
   </div>
 </section>
 
@@ -259,6 +242,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--ward);outline-o
   </div>
 </section>
 
+<!-- MAP[sys.boot] F-01: if this CDN script fails to load => THREE is undefined, the IIFE throws at `const EYE`, Begin is never wired and the player sees no message (missing SHOULD RESULT). F-02: no integrity (SRI) attribute => third-party code runs with full page authority (should-be vs as-is owner mismatch). -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
@@ -375,8 +359,7 @@ let renderer;
 try {
   renderer = new THREE.WebGLRenderer({ canvas: view, antialias: false, powerPreference: 'high-performance' });
 } catch (e) {
-  $('startNote').textContent = 'This browser could not start 3D graphics (WebGL). Try another browser or turn off battery saver.';
-  $('btnBegin').disabled = true;
+  blockStart('This browser could not start 3D graphics (WebGL). Try another browser or turn off battery saver.');
   return;
 }
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
@@ -387,6 +370,23 @@ scene.fog = new THREE.FogExp2(0x0d1230, 0.0062);
 const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 1200);
 camera.position.copy(EYE);
 scene.add(camera);
+
+// Scene-owned operations. Other modules change the camera, renderer and view size only through these.
+// MAP[scene.orientCamera] F-05 (resolved): the only writer of the camera pose and matrices. input.updateLook asks for a pose; run.frame no longer touches the camera.
+function orientCamera(target, k, shake) {
+  camera.quaternion.slerp(target, k);
+  if (shake > 0) {
+    camera.rotateX((Math.random() - 0.5) * shake * 0.05);
+    camera.rotateY((Math.random() - 0.5) * shake * 0.05);
+  }
+  camera.updateMatrixWorld();
+}
+function renderScene() { renderer.render(scene, camera); }
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.fov = w > h ? 62 : 72; camera.updateProjectionMatrix();
+}
 
 /* =========================================================================
    5. PROCEDURAL TEXTURES — everything is drawn, nothing is downloaded
@@ -585,6 +585,16 @@ const World = {};
     World.torches.push({ outer, inner, light, seed: Math.random() * 10 });
   });
 })();
+// Ambience for one frame: sky flash (0..1), dawn progress (0..1) eases the glow, stars fade with it, torches flicker.
+function updateAmbience(dt, worldT, flash, dawn) {
+  World.hemi.intensity = 0.6 + flash * 1.4;
+  World.dawn.material.opacity += (dawn * 0.5 - World.dawn.material.opacity) * dt;
+  World.starMat.opacity = 0.9 - World.dawn.material.opacity * 0.9;
+  World.torches.forEach(tc => {
+    const f = 0.85 + 0.15 * Math.sin(worldT * 13 + tc.seed) * Math.sin(worldT * 7.3 + tc.seed * 2);
+    tc.light.intensity = 1.3 * f; tc.outer.scale.setScalar(0.62 * f); tc.inner.scale.setScalar(0.3 * f);
+  });
+}
 
 /* =========================================================================
    7. WAND — child of the camera, bottom-right of the view
@@ -604,6 +614,14 @@ const Wand = { group: new THREE.Group(), pivot: new THREE.Group(), tip: new THRE
   Wand.group.add(Wand.pivot); Wand.group.position.set(0.2, -0.25, -0.5);
   camera.add(Wand.group);
 })();
+function kickWand(color) { Wand.kick = 1; Wand.color.set(color); Wand.glow.material.color.set(color); }
+function updateWand(dt, worldT, visible) {
+  Wand.kick = Math.max(0, Wand.kick - dt * 6);
+  Wand.group.position.z = -0.5 + Wand.kick * 0.05;
+  Wand.group.rotation.x = Wand.kick * 0.12;
+  Wand.group.visible = visible;
+  const g = 0.055 + Wand.kick * 0.08 + Math.sin(worldT * 5) * 0.006; Wand.glow.scale.set(g, g, 1);
+}
 
 /* =========================================================================
    8. LOOK — device orientation (gyro) with drag fallback
@@ -618,64 +636,27 @@ function screenAngle() {
   const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
   return a * DEG;
 }
-/* Motion sources, best first:
-   1. 'sensor'  — Generic Sensor API (Chrome / Samsung Internet on Android): fused gyro quaternion, smooth, no yaw drift jumps.
-   2. 'event'   — deviceorientation events (iOS Safari, Firefox, older Android).
-   3. 'absolute'— deviceorientationabsolute (some Android builds only send compass-based angles).
-   Whichever answers first with real data wins; a better source takes over if it starts later. */
-const Motion = { source: 'none', sensor: null, sq: new THREE.Quaternion(), relAlpha: false, reason: '', listening: false };
-const RANK = { none: 0, absolute: 1, event: 2, sensor: 3 };
-function useSource(src) {
-  if (RANK[src] < RANK[Motion.source]) return false;
-  if (src !== Motion.source) { Motion.source = src; Look.needRecenter = true; updateMotionChip(); }
-  Look.sensor = true; return true;
+// MAP[input.Look] F-05 (resolved): Look is written only by input.* (pushReading, dragBy, deviceQuat, recenter, recenterSilent). game_interface pushes readings and drags through them.
+// Input-owned operations. Other modules change Look only through these (and recenter / recenterSilent).
+function pushReading(alpha, beta, gamma) {
+  Look.last = { a: alpha * DEG, b: beta * DEG, g: gamma * DEG };
+  Look.sensor = true;
+}
+function dragBy(dx, dy) {
+  const k = 0.0048 * (70 / camera.fov);
+  Look.dragYaw += dx * k;
+  if (!Look.sensor) Look.dragPitch = clamp(Look.dragPitch + dy * k, -1.3, 1.3);
 }
 function onDeviceOrientation(e) {
-  if (e.beta == null || e.gamma == null) return;
-  if (e.alpha != null) Motion.relAlpha = true;
-  if (!useSource('event')) return;
-  Look.last = { a: (e.alpha || 0) * DEG, b: e.beta * DEG, g: e.gamma * DEG };
+  if (e.alpha == null && e.beta == null) return;
+  pushReading(e.alpha || 0, e.beta || 0, e.gamma || 0);
 }
-function onDeviceOrientationAbsolute(e) {
-  if (Motion.relAlpha || e.alpha == null || e.beta == null) return;
-  if (!useSource('absolute')) return;
-  Look.last = { a: e.alpha * DEG, b: e.beta * DEG, g: (e.gamma || 0) * DEG };
-}
-function startOrientationSensor() {
-  if (Motion.sensor || !('RelativeOrientationSensor' in window)) return;
-  const go = () => {
-    try {
-      const s = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'device' });
-      s.addEventListener('reading', () => { if (s.quaternion && useSource('sensor')) Motion.sq.fromArray(s.quaternion); });
-      s.addEventListener('error', ev => { Motion.reason = (ev.error && ev.error.name) || 'SensorError'; Motion.sensor = null; try { s.stop(); } catch (err) { /* stopped */ } });
-      s.start(); Motion.sensor = s;
-    } catch (err) { Motion.reason = err.name || 'SensorError'; }
-  };
-  if (navigator.permissions && navigator.permissions.query) {
-    Promise.all(['accelerometer', 'gyroscope'].map(n => navigator.permissions.query({ name: n }).then(r => r.state, () => 'granted')))
-      .then(states => { if (states.includes('denied')) Motion.reason = 'NotAllowedError'; else go(); }, go);
-  } else go();
-}
-function listenOrientation() {
-  if (Motion.listening) return;
-  Motion.listening = true;
-  window.addEventListener('deviceorientation', onDeviceOrientation);
-  window.addEventListener('deviceorientationabsolute', onDeviceOrientationAbsolute);
-  window.addEventListener('devicemotion', onDeviceMotion);
-  startOrientationSensor();
-}
-const Q_EARTH_TO_WORLD = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
 function deviceQuat(out) {
-  if (Motion.source === 'sensor') {
-    // Sensor gives device→Earth (Z up). Earth→three world is −90° about X; then undo the screen rotation.
-    out.copy(Q_EARTH_TO_WORLD).multiply(Motion.sq);
-  } else {
-    // Same mapping three.js used for DeviceOrientationControls: phone screen = camera.
-    const { a, b, g } = Look.last;
-    Look._euler.set(b, a, -g, 'YXZ');
-    out.setFromEuler(Look._euler);
-    out.multiply(Look._q1);
-  }
+  // Same mapping three.js uses for DeviceOrientationControls: phone screen = camera.
+  const { a, b, g } = Look.last;
+  Look._euler.set(b, a, -g, 'YXZ');
+  out.setFromEuler(Look._euler);
+  out.multiply(Look._q1);
   out.multiply(Look._q0.setFromAxisAngle(Look._z, -screenAngle()));
   if (Look.needRecenter) {
     Look._fwd.set(0, 0, -1).applyQuaternion(out);
@@ -688,27 +669,19 @@ function deviceQuat(out) {
 }
 function recenter() {
   Look.needRecenter = true; Look.dragYaw = 0; Look.dragPitch = 0;
-  if (!Look.sensor && IS_TOUCH) {
-    enableMotion();   // a tap here is also a second chance to grant motion access
-    showToast(motionHelp(), 4200);
-    return;
-  }
   showToast('Facing forward. New creatures come from here first.', 1600);
 }
 function updateLook(dt, t) {
   if (game.state === 'title') {
     Look.target.setFromEuler(Look._euler.set(0.1 + Math.sin(t * 0.13) * 0.05, -t * 0.045, 0, 'YXZ'));
-  } else if (Look.sensor && (Motion.source === 'sensor' || Look.last)) {
+  } else if (Look.sensor && Look.last) {
     deviceQuat(Look.target);
   } else {
     Look.target.setFromEuler(Look._euler.set(Look.dragPitch, Look.dragYaw, 0, 'YXZ'));
   }
-  camera.quaternion.slerp(Look.target, 1 - Math.exp(-dt * (Look.sensor ? 22 : 30)));
-  if (game.shake > 0) {
-    camera.rotateX((Math.random() - 0.5) * game.shake * 0.05);
-    camera.rotateY((Math.random() - 0.5) * game.shake * 0.05);
-  }
+  orientCamera(Look.target, 1 - Math.exp(-dt * (Look.sensor ? 22 : 30)), game.shake);
 }
+// MAP[game_interface.enableMotion]: safe to call on every Begin: addEventListener ignores an identical (type, listener, capture) triple, so listeners never stack (proof).
 async function enableMotion() {
   // iOS 13+ asks permission; this must start inside the tap handler.
   try {
@@ -719,34 +692,10 @@ async function enableMotion() {
         try { await DeviceMotionEvent.requestPermission(); } catch (e) { /* flick stays off */ }
       }
     }
-  } catch (e) { Motion.reason = 'NotAllowedError'; return false; }
-  listenOrientation();
+  } catch (e) { return false; }
+  window.addEventListener('deviceorientation', onDeviceOrientation);
+  window.addEventListener('devicemotion', onDeviceMotion);
   return true;
-}
-const NEEDS_TAP_PERMISSION = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
-const IN_FRAME = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
-const IS_TOUCH = matchMedia('(pointer: coarse)').matches;
-// Plain-language reason motion can't work here, or '' if it should.
-function motionBlocker() {
-  if (IN_FRAME) return 'Motion is blocked while the game sits inside another page. Open it in its own tab to aim by moving the phone.';
-  if (!window.isSecureContext) return 'Phones only share motion with secure pages. Open this game from an https:// address, not http:// or a local file.';
-  if (typeof DeviceOrientationEvent === 'undefined' && !('RelativeOrientationSensor' in window)) return 'This browser has no motion sensor support. Try Chrome or Samsung Internet.';
-  return '';
-}
-function motionHelp() {
-  const b = motionBlocker(); if (b) return b;
-  if (Motion.reason === 'NotAllowedError') return 'Motion access was refused. In Chrome: tap the icon left of the address, open Permissions or Site settings, and allow Motion sensors. Then reload.';
-  return 'No motion readings yet. In Chrome: Settings › Site settings › Motion sensors must be allowed. Drag the view to look meanwhile.';
-}
-function updateMotionChip() {
-  const chip = $('motionChip'); if (!chip) return;
-  const label = { sensor: 'gyroscope', event: 'orientation', absolute: 'compass' }[Motion.source];
-  if (label) { chip.dataset.state = 'on'; chip.textContent = `Motion aiming ready (${label})`; return; }
-  const b = motionBlocker();
-  if (b) { chip.dataset.state = 'off'; chip.textContent = b; }
-  else if (NEEDS_TAP_PERMISSION) { chip.dataset.state = 'wait'; chip.textContent = 'Motion aiming turns on when you begin. Tap Allow when asked.'; }
-  else if (!IS_TOUCH) { chip.dataset.state = 'wait'; chip.textContent = 'No phone detected: drag to look, keys 1–4 to cast.'; }
-  else { chip.dataset.state = 'wait'; chip.textContent = 'Waiting for motion readings… lift the phone.'; }
 }
 // Drag to look (always on: nudges yaw when the gyro is active)
 (function dragLook() {
@@ -754,9 +703,7 @@ function updateMotionChip() {
   view.addEventListener('pointerdown', e => { if (id !== null) return; id = e.pointerId; lx = e.clientX; ly = e.clientY; view.setPointerCapture(id); });
   view.addEventListener('pointermove', e => {
     if (e.pointerId !== id || game.state !== 'play') return;
-    const k = 0.0048 * (70 / camera.fov);
-    Look.dragYaw += (e.clientX - lx) * k;
-    if (!Look.sensor) Look.dragPitch = clamp(Look.dragPitch + (e.clientY - ly) * k, -1.3, 1.3);
+    dragBy(e.clientX - lx, e.clientY - ly);
     lx = e.clientX; ly = e.clientY;
   });
   const end = e => { if (e.pointerId === id) id = null; };
@@ -782,7 +729,30 @@ const game = {
   shake: 0, flash: 0, held: null, lastSpell: null,
 };
 const player = { hp: CFG.maxHP, mp: CFG.maxMP, wardUntil: 0 };
+// MAP[run.state] F-05 (resolved at o3standalone/2): game and player are written only by run.* functions (checked by check_ownership.py). Other modules read them, and write only through the operations below.
+// Run-owned operations. Other modules change game and player only through these and the transitions in section 13.
+function payForCast(spell) {
+  if (player.mp < spell.cost) return false;
+  player.mp -= spell.cost; game.lastSpell = spell;
+  return true;
+}
+function raiseWard(seconds) { player.wardUntil = game.t + seconds; }
+function flashSky() { game.flash = 1; }
+function awardBanish(points) {
+  if (game.comboT > 0) game.combo++; else game.combo = 1;
+  game.comboT = CFG.comboWindow;
+  const mult = Math.min(3, 1 + Math.floor(game.combo / 5) * 0.5);
+  game.score += Math.round(points * mult);
+}
+function takeHit(damage) {
+  player.hp = Math.max(0, player.hp - damage);
+  game.shake = 1; game.combo = 0; game.comboT = 0;
+  return player.hp;
+}
+function holdSpell(spell) { game.held = spell; }
+function releaseSpell(spell) { if (game.held === spell) game.held = null; }
 const enemies = [], shots = [], bolts = [];
+// MAP[sys.scratch]: shared mutable scratch used by combat, hud and input. Never hold a value across a call into another node. combat.fireShot/cast read tipPos written by combat.aimDirection (temporal coupling; critical: if aimDirection is skipped => shot spawns from a stale tip).
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3(), camFwd = new THREE.Vector3(), tipPos = new THREE.Vector3();
 
 /* =========================================================================
@@ -805,6 +775,7 @@ function burst(pos, color, n, speed, size) {
     emit(pos, color, tmpA, rand(0.35, 0.8), size * rand(0.6, 1.2), -0.3);
   }
 }
+function clearParticles() { Particles.pool.forEach(p => { p.s.visible = false; }); }
 function updateParticles(dt) {
   for (const p of Particles.pool) {
     if (!p.s.visible) continue;
@@ -848,10 +819,8 @@ function killEnemy(e, color) {
   e.dead = true;
   burst(e.pos, e.def.tint, 14, 9, 1.4);
   if (color) burst(e.pos, color, 6, 6, 1.0);
-  if (game.comboT > 0) game.combo++; else game.combo = 1;
-  game.comboT = CFG.comboWindow;
-  const mult = Math.min(3, 1 + Math.floor(game.combo / 5) * 0.5);
-  game.score += Math.round(e.def.score * mult);
+  // MAP[combat.killEnemy] F-05 resolved: the tally is run-owned; combat reports the banish through run.awardBanish. F-04 still applies: this can run after run.endGame in the same tick.
+  awardBanish(e.def.score);
   Sfx.play('kill');
 }
 function removeEnemy(i) {
@@ -883,12 +852,12 @@ function reachTower(e) {
     killEnemy(e, 0xffd56b); burst(e.pos, 0xffd56b, 10, 10, 1.2); return;
   }
   e.dead = true;
-  player.hp = Math.max(0, player.hp - e.def.dmg);
-  game.shake = 1; $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 220);
+  const hp = takeHit(e.def.dmg);
+  flashHurt();
   if (navigator.vibrate) { try { navigator.vibrate(90); } catch (err) { /* ignore */ } }
-  game.combo = 0; game.comboT = 0;
   Sfx.play('hurt');
-  if (player.hp <= 0) endGame(false);
+  // MAP[combat.reachTower] F-04: endGame runs mid-tick; run.frame still calls updateShots this tick, so a kill after endGame adds to game.score after best was saved (SIDE-EFFECT: UNDECLARED).
+  if (hp <= 0) endGame(false);
 }
 
 /* =========================================================================
@@ -911,11 +880,12 @@ function fireShot(spell, dir, opts) {
 function cast(spell) {
   if (game.state !== 'play') return;
   if (game.t < spell.readyAt) return;
-  if (player.mp < spell.cost) { Sfx.play('fizzle'); flashMana(); spell.readyAt = game.t + 0.25; return; }
-  player.mp -= spell.cost; spell.readyAt = game.t + spell.cd;
-  game.lastSpell = spell; Wand.kick = 1; Wand.color.set(spell.color); Wand.glow.material.color.set(spell.color);
+  if (!payForCast(spell)) { Sfx.play('fizzle'); flashMana(); spell.readyAt = game.t + 0.25; return; }
+  spell.readyAt = game.t + spell.cd;
+  kickWand(spell.color);
   const dir = aimDirection(new THREE.Vector3());
   switch (spell.id) {
+    // MAP[combat.cast]: holding Emberlance costs 6 aether per 0.22 s (~27/s) against 15/s regen => about 8 s of continuous fire from full. Deliberate pressure, see combat 2B.
     case 'ember':
       fireShot(spell, dir, { speed: 72, dmg: 1, homing: 3.2, radius: 0.5, size: 0.9 }); break;
     case 'rime': {
@@ -928,7 +898,7 @@ function cast(spell) {
     }
     case 'arc': castArc(spell); break;
     case 'ward':
-      player.wardUntil = game.t + 4.5; burst(EYE.clone().addScaledVector(camFwd, 1.5), spell.color, 18, 4, 0.6); break;
+      raiseWard(4.5); burst(EYE.clone().addScaledVector(camFwd, 1.5), spell.color, 18, 4, 0.6); break;
   }
   emit(tipPos, spell.color, tmpA.set(0, 0, 0), 0.18, 0.25, 1.5);
   Sfx.play(spell.id);
@@ -942,6 +912,7 @@ function castArc(spell) {
     if (c > bestCos) { bestCos = c; best = e; }
   }
   const pts = [tipPos.clone()];
+  // MAP[combat.castArc] F-08: with no target in the 16-degree cone Skylash still spends 28 aether and flashes (SIDE-EFFECT: UNDECLARED, needs an o2 accept/reject).
   if (!best) { pts.push(camera.position.clone().addScaledVector(camFwd, 45)); }
   else {
     const hit = new Set([best]); let cur = best;
@@ -954,7 +925,16 @@ function castArc(spell) {
     }
   }
   bolts.push({ pts, life: 0.24, max: 0.24, color: '#e3d2ff' });
-  game.flash = 1;
+  flashSky();
+}
+// Combat-owned operations on its live state, called by run.
+function updateBolts(dt) {
+  for (let i = bolts.length - 1; i >= 0; i--) { const b = bolts[i]; b.life -= dt; if (b.life <= 0) bolts.splice(i, 1); }
+}
+function resetCombat() {
+  enemies.forEach(e => { scene.remove(e.s); e.mat.dispose(); }); enemies.length = 0;
+  shots.forEach(p => scene.remove(p.s)); shots.length = 0; bolts.length = 0;
+  SPELLS.forEach(s => { s.readyAt = 0; });
 }
 function segDist(a, b, p) {
   tmpB.subVectors(b, a); tmpC.subVectors(p, a);
@@ -1001,13 +981,12 @@ function startToll(n) {
   showBanner(`Toll ${ROMAN[n]}`, subs[n] || '');
   Sfx.play('bell');
 }
+// MAP[run.resetGame]: leaves spawnLeft/spawnTimer/inBreak/breakT stale. Proof (if X => true): X = every entry into state "play" from title/over goes through run.beginGame -> run.startToll, which re-initialises them. resumeGame only re-enters from "paused".
 function resetGame() {
-  enemies.forEach(e => { scene.remove(e.s); e.mat.dispose(); }); enemies.length = 0;
-  shots.forEach(p => scene.remove(p.s)); shots.length = 0; bolts.length = 0;
-  Particles.pool.forEach(p => { p.s.visible = false; });
+  resetCombat();
+  clearParticles();
   Object.assign(player, { hp: CFG.maxHP, mp: CFG.maxMP, wardUntil: 0 });
   Object.assign(game, { t: 0, toll: 0, score: 0, combo: 0, comboT: 0, shake: 0, flash: 0, held: null, lastSpell: null });
-  SPELLS.forEach(s => { s.readyAt = 0; });
 }
 function updateFlow(dt) {
   if (game.spawnLeft > 0) {
@@ -1024,8 +1003,8 @@ function updateFlow(dt) {
 }
 function beginGame() {
   resetGame();
-  show('screenStart', false); show('screenEnd', false); show('screenPause', false);
-  show('hud', true); show('reticle', true);
+  showScreen(null);
+  setPlayVisible(true);
   game.state = 'play'; recenterSilent();
   measureHud();
   startToll(1);
@@ -1036,22 +1015,22 @@ function endGame(won) {
   game.state = 'over'; game.held = null;
   if (won) game.score += Math.round(player.hp * 5);
   if (game.score > game.best) { game.best = game.score; store.set('starwatch-best', game.best); }
-  $('endEyebrow').textContent = won ? 'Eight tolls survived' : `Fell during toll ${ROMAN[game.toll]}`;
-  $('endTitle').textContent = won ? 'Dawn breaks over the spire' : 'The spire has fallen';
-  $('endLede').textContent = won ? `Sunlight drives the last of them back into the hills. Your remaining vitality added ${Math.round(player.hp * 5)} to the tally.`
-    : 'The creatures reached the tower top. Rest, then take the watch again.';
-  $('endScore').textContent = game.score.toLocaleString();
-  $('endToll').textContent = ROMAN[game.toll];
-  $('endBest').textContent = game.best.toLocaleString();
+  showEndCard({ won, score: game.score, toll: game.toll, best: game.best, bonus: Math.round(player.hp * 5) });
   Sfx.play(won ? 'dawn' : 'hurt');
-  show('hud', false); show('reticle', false); show('screenEnd', true);
-  $('combo').textContent = '';
+  setPlayVisible(false);
+  showScreen('end');
 }
 function pauseGame() {
   if (game.state !== 'play') return;
-  game.state = 'paused'; game.held = null; show('screenPause', true);
+  game.state = 'paused'; game.held = null; showScreen('pause');
 }
-function resumeGame() { if (game.state !== 'paused') return; show('screenPause', false); game.state = 'play'; }
+function resumeGame() { if (game.state !== 'paused') return; showScreen(null); game.state = 'play'; }
+function quitToTitle() {
+  if (game.state !== 'paused') return;
+  resetGame(); game.state = 'title';
+  showScreen('start');
+  setPlayVisible(false);
+}
 
 /* =========================================================================
    14. HUD + FX overlay (arrows, lightning, health pips)
@@ -1071,25 +1050,36 @@ function showBanner(title, sub) {
   clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.classList.remove('show'), 2200);
 }
 function flashMana() { const m = $('mpMeter'); m.classList.add('short'); setTimeout(() => m.classList.remove('short'), 300); }
+function flashHurt() { $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 220); }
+// HUD and reticle shown in play and pause; hiding them also clears the chain text (and its cache).
+function setPlayVisible(v) {
+  show('hud', v); show('reticle', v);
+  if (!v) { $('combo').textContent = ''; lastHud.combo = ''; }
+}
 
 const spellButtons = SPELLS.map(sp => {
   const b = document.createElement('button');
   b.className = 'spell'; b.id = 'spell-' + sp.id; b.style.setProperty('--c', sp.css);
   b.setAttribute('aria-label', `${sp.name}, ${sp.cost} aether`);
   b.innerHTML = `<span class="key">${sp.key}</span><span class="sigil">${ICONS[sp.id]}</span><span class="nm">${sp.name}</span><span class="cost">${sp.cost} aether</span>`;
-  b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } Sfx.init(); game.held = sp; b.classList.add('held'); cast(sp); });
-  const up = () => { if (game.held === sp) game.held = null; b.classList.remove('held'); };
+  b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } Sfx.init(); holdSpell(sp); b.classList.add('held'); cast(sp); });
+  const up = () => { releaseSpell(sp); b.classList.remove('held'); };
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, up));
   b.addEventListener('contextmenu', e => e.preventDefault());
   b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cast(sp); } });
+  // MAP[game_interface.spellButtons] F-11: the buttons live in hud's #spells container. Hosting own elements in another module's container is not a write of its state (judgement), raised for a boundary decision.
   $('spells').appendChild(b);
   return b;
 });
+// Spell button cooldown sweep and "low" look; hud.updateHud decides the values.
+function setSpellReadiness(i, frac, low) {
+  const b = spellButtons[i]; b.style.setProperty('--cd', frac.toFixed(3));
+  b.classList.toggle('low', low);
+}
 
-function resize() {
+// MAP[hud.resizeOverlay] F-05 (resolved): hud's viewport (W, H, DPR, overlay size) is written only here; scene.resize sizes only the renderer and camera.
+function resizeOverlay() {
   W = window.innerWidth; H = window.innerHeight; DPR = Math.min(window.devicePixelRatio || 1, 2);
-  renderer.setSize(W, H, false);
-  camera.aspect = W / H; camera.fov = W > H ? 62 : 72; camera.updateProjectionMatrix();
   fx.width = Math.round(W * DPR); fx.height = Math.round(H * DPR); fctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   measureHud();
 }
@@ -1153,7 +1143,7 @@ function drawFX(dt) {
   }
   // lightning
   for (let i = bolts.length - 1; i >= 0; i--) {
-    const b = bolts[i]; b.life -= dt; if (b.life <= 0) { bolts.splice(i, 1); continue; }
+    const b = bolts[i];
     const screenPts = [];
     for (const p of b.pts) { if (toScreen(p)) screenPts.push({ x: scr.x, y: scr.y }); }
     if (screenPts.length < 2) continue;
@@ -1185,8 +1175,7 @@ function updateHud() {
   if (combo !== lastHud.combo) { $('combo').textContent = combo; lastHud.combo = combo; }
   SPELLS.forEach((sp, i) => {
     const left = Math.max(0, sp.readyAt - game.t), frac = sp.cd > 0 ? clamp(left / sp.cd, 0, 1) : 0;
-    const b = spellButtons[i]; b.style.setProperty('--cd', frac.toFixed(3));
-    b.classList.toggle('low', player.mp < sp.cost);
+    setSpellReadiness(i, frac, player.mp < sp.cost);
   });
   $('wardGlow').style.opacity = game.t < player.wardUntil ? (0.55 + 0.25 * Math.sin(game.t * 6)).toFixed(2) : 0;
 }
@@ -1197,9 +1186,9 @@ function updateHud() {
 let lastT = performance.now(), worldT = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  // MAP[run.frame]: proof dt <= 0.05 s, so a backgrounded tab never jumps the simulation. Below 20 fps game time runs slower than wall time (SIDE-EFFECT: ACCEPTED). game.state is read once per tick (see F-04).
   const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; worldT += dt;
   updateLook(dt, worldT);
-  camera.updateMatrixWorld();
 
   if (game.state === 'play') {
     game.t += dt;
@@ -1216,27 +1205,35 @@ function frame(now) {
   // ambience
   game.shake = Math.max(0, game.shake - dt * 3);
   game.flash = Math.max(0, game.flash - dt * 5);
-  World.hemi.intensity = 0.6 + game.flash * 1.4;
   const dawn = game.state === 'title' ? 0.1 : clamp((game.toll - 1) / (CFG.tolls - 1), 0, 1);
-  World.dawn.material.opacity += (dawn * 0.5 - World.dawn.material.opacity) * dt;
-  World.starMat.opacity = 0.9 - World.dawn.material.opacity * 0.9;
-  World.torches.forEach(tc => {
-    const f = 0.85 + 0.15 * Math.sin(worldT * 13 + tc.seed) * Math.sin(worldT * 7.3 + tc.seed * 2);
-    tc.light.intensity = 1.3 * f; tc.outer.scale.setScalar(0.62 * f); tc.inner.scale.setScalar(0.3 * f);
-  });
-  Wand.kick = Math.max(0, Wand.kick - dt * 6);
-  Wand.group.position.z = -0.5 + Wand.kick * 0.05;
-  Wand.group.rotation.x = Wand.kick * 0.12;
-  Wand.group.visible = game.state === 'play' || game.state === 'paused';
-  const g = 0.055 + Wand.kick * 0.08 + Math.sin(worldT * 5) * 0.006; Wand.glow.scale.set(g, g, 1);
+  updateAmbience(dt, worldT, game.flash, dawn);
+  const watching = game.state === 'play' || game.state === 'paused';
+  updateWand(dt, worldT, watching);
 
-  renderer.render(scene, camera);
+  renderScene();
+  // MAP[run.frame] F-09: bolts age in play and pause, exactly as when hud.drawFX aged them in v1. Skipping ageing while paused would now be this one condition.
+  if (watching) updateBolts(dt);
   drawFX(dt);
 }
 
 /* =========================================================================
    16. WIRING
    ========================================================================= */
+// Interface-owned screen operations. Other modules show cards and end-card text only through these.
+const SCREENS = { start: 'screenStart', pause: 'screenPause', end: 'screenEnd' };
+function showScreen(name) { for (const k in SCREENS) $(SCREENS[k]).hidden = k !== name; }
+function showEndCard(r) {
+  $('endEyebrow').textContent = r.won ? 'Eight tolls survived' : `Fell during toll ${ROMAN[r.toll]}`;
+  $('endTitle').textContent = r.won ? 'Dawn breaks over the spire' : 'The spire has fallen';
+  $('endLede').textContent = r.won ? `Sunlight drives the last of them back into the hills. Your remaining vitality added ${r.bonus} to the tally.`
+    : 'The creatures reached the tower top. Rest, then take the watch again.';
+  $('endScore').textContent = r.score.toLocaleString();
+  $('endToll').textContent = ROMAN[r.toll];
+  $('endBest').textContent = r.best.toLocaleString();
+}
+// MAP[game_interface.blockStart]: proof: function declarations are hoisted to the top of the IIFE, so scene.renderer can call this before section 16 runs; it uses only $ (section 2) and the start card, both ready by then.
+// Called from scene.renderer before anything else is wired (function declarations are hoisted).
+function blockStart(reason) { $('startNote').textContent = reason; $('btnBegin').disabled = true; }
 let wakeLock = null;
 async function keepAwake() {
   try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { /* not allowed here */ }
@@ -1252,19 +1249,16 @@ $('btnBegin').addEventListener('click', async () => {
   beginGame();
   setTimeout(() => {
     if (game.state !== 'play') return;
-    if (!Look.sensor) { if (!ok) Motion.reason = Motion.reason || 'NotAllowedError'; showToast(IS_TOUCH ? motionHelp() : 'Drag to look around. Keys 1–4 cast spells.', 5200); }
+    // MAP[game_interface.onBegin]: the toast is the only place the player learns which look mode is active (CJ-01 step 6).
+    if (!Look.sensor) showToast(ok ? 'No motion readings yet. Drag the view to look around.' : 'Motion access is off. Drag the view to look around.', 3600);
     else showToast('Turn with the phone to look. Recenter any time with the compass button.', 3000);
-  }, 1600);
+  }, 1300);
 });
 $('optFlick').addEventListener('change', e => { settings.flick = e.target.checked; store.set('starwatch-flick', settings.flick); });
 $('btnCenter').addEventListener('click', recenter);
 $('btnPause').addEventListener('click', pauseGame);
 $('btnResume').addEventListener('click', resumeGame);
-$('btnQuit').addEventListener('click', () => {
-  resetGame(); game.state = 'title';
-  show('screenPause', false); show('hud', false); show('reticle', false); show('screenStart', true);
-  $('combo').textContent = '';
-});
+$('btnQuit').addEventListener('click', quitToTitle);
 $('btnAgain').addEventListener('click', () => { Sfx.init(); keepAwake(); beginGame(); });
 const sndBtn = $('btnSound');
 sndBtn.setAttribute('aria-pressed', String(Sfx.on));
@@ -1275,29 +1269,22 @@ window.addEventListener('keydown', e => {
   const sp = SPELLS.find(s => s.key === e.key);
   if (sp) { Sfx.init(); cast(sp); }
   else if (e.key === ' ' && game.state === 'play') { e.preventDefault(); cast(game.lastSpell || SPELLS[0]); }
+  // MAP[game_interface.keyboard] F-10: Esc also exits fullscreen (the browser does this, unpreventably) and nothing requests it again. Esc is not user activation, so only a click handler could re-request.
   else if (e.key === 'Escape' || e.key === 'p') { game.state === 'play' ? pauseGame() : resumeGame(); }
+  // MAP[game_interface.keyboard] F-06: 'c' recenters and shows the toast in every state, including title and end screens (SIDE-EFFECT: UNDECLARED, minor).
   else if (e.key === 'c') recenter();
 });
+// MAP[game_interface.onVisibilityChange] F-03: hidden => pauseGame => state 'paused'; on return state != 'play' so keepAwake is skipped, and resumeGame never calls it => the screen wake lock is lost for the rest of the run (missing SHOULD RESULT).
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pauseGame(); else if (game.state === 'play') keepAwake();
 });
-window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+function onResize() { resize(); resizeOverlay(); }
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', () => setTimeout(onResize, 250));
 
-// Android needs no tap to share motion, so start listening now and show the result on the start screen.
-if (!NEEDS_TAP_PERMISSION && !motionBlocker()) listenOrientation();
-// Framed (e.g. a preview): offer the same page as a top-level tab, where the browser allows sensors.
-if (IN_FRAME && /^https:/.test(location.href)) { const a = $('openTab'); a.href = location.href.split('#')[0]; a.hidden = false; }
-updateMotionChip();
-setTimeout(() => {
-  if (Motion.source !== 'none' || NEEDS_TAP_PERMISSION || !IS_TOUCH) return;
-  const chip = $('motionChip'); chip.dataset.state = 'off'; chip.textContent = motionHelp();
-}, 2500);
-
-resize();
+resize(); resizeOverlay();   // first sizing of the view and the overlay
 requestAnimationFrame(t => { lastT = t; frame(t); });
 })();
 </script>
 
-</body>
-</html>
+</body></html>
