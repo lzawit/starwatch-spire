@@ -1,12 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-</head>
-<body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Starwatch Spire</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#090c20">
@@ -151,13 +143,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--ward);outline-o
 .secondary{font-size:1rem;padding:12px 18px;border-radius:12px;border:1px solid var(--line);background:var(--glass)}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>*{flex:1 1 auto}
-.chip{margin:0;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--glass);font-size:.88rem;line-height:1.4}
-.chip::before{content:"";flex:none;width:9px;height:9px;margin-top:.35em;border-radius:50%;background:var(--dim)}
-.chip[data-state="on"]{border-color:rgba(125,255,208,.4)}
-.chip[data-state="on"]::before{background:#7dffd0;box-shadow:0 0 10px #7dffd0}
-.chip[data-state="off"]{border-color:rgba(232,88,107,.45)}
-.chip[data-state="off"]::before{background:var(--vital)}
-.linkbtn{display:block;text-align:center;text-decoration:none;color:var(--parchment)}
 .fine{margin:0;color:var(--dim);font-size:.8rem;line-height:1.45}
 .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
 .stats div{border-top:1px solid var(--line);padding-top:8px;min-width:0}
@@ -228,9 +213,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--ward);outline-o
       <input type="checkbox" class="switch" id="optFlick">
     </label>
     <button class="primary" id="btnBegin">Begin the watch</button>
-    <p class="chip" id="motionChip" data-state="wait" role="status">Checking motion sensors…</p>
-    <a class="secondary linkbtn" id="openTab" href="#" target="_blank" rel="noopener" hidden>Open the game in its own tab</a>
-    <p class="fine" id="startNote">Aiming by moving the phone needs an https page. Without it you can still drag the view to look.</p>
+    <p class="fine" id="startNote">Motion aiming needs a phone and a secure (https) page. Without it, drag the view to look. On a computer: drag to look, keys 1–4 to cast.</p>
   </div>
 </section>
 
@@ -259,866 +242,1067 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--ward);outline-o
   </div>
 </section>
 
+<!-- MAP[sys.boot] F-01: if this CDN script fails to load => THREE is undefined, the IIFE throws at `const EYE`, Begin is never wired and the player sees no message (missing SHOULD RESULT). F-02: no integrity (SRI) attribute => third-party code runs with full page authority (should-be vs as-is owner mismatch). -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
 'use strict';
 
 /* =========================================================================
-   1. CONFIG — all tuning numbers live here
+   MODULE LAYOUT (F-05, project o3standalone/3)
+   Each module is a factory with its own private scope. It hands out one frozen object
+   holding only its declared boundary nodes. sys.boot (bottom) is the composition root:
+   it builds the modules in supplier-first order, connects the run⇄combat, scene⇄combat,
+   input⇄hud and run⇄hud cycles with one-shot wire() functions, and then drops them.
+   Owners: see o3standalone/3/static-map-updated/00-ownership.md. The static check
+   o3standalone/3/checks/check_boundaries.py reads the @module markers below.
    ========================================================================= */
-const CFG = {
-  maxHP: 100, maxMP: 100, mpRegen: 15, tolls: 8,
-  eyeHeight: 1.6, reachDist: 2.6, healBetweenTolls: 15,
-  spawnDist: [72, 96], breakSeconds: 3.2,
-  comboWindow: 2.6, flickThreshold: 17,
-};
-const EYE = new THREE.Vector3(0, CFG.eyeHeight, 0);
 
-const ENEMY = {
-  wisp:     { hp: 1, speed: 7.5, dmg: 8,  radius: 1.4, score: 10, size: 2.3, wobble: 1.4, tint: '#7dffd0' },
-  shade:    { hp: 2, speed: 9.0, dmg: 12, radius: 1.6, score: 20, size: 3.1, wobble: 6.0, tint: '#b48cff' },
-  gargoyle: { hp: 5, speed: 4.3, dmg: 20, radius: 2.1, score: 40, size: 2.4, wobble: 0.9, tint: '#ff6a4a' },
-};
-
-const ICONS = {
-  ember: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 2.5c2.2 4 6 6.2 6 11a6 6 0 0 1-12 0c0-2.8 1.7-4.3 2.8-6.2.9 1.8 1.9 2.9 3 3.2-1-3-.8-5.6.2-8z"/><path d="M12 21v-4"/></svg>',
-  rime:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/><path d="M9.5 3.8L12 6l2.5-2.2M9.5 20.2L12 18l2.5 2.2M4 10.6l3.3-.6-.9-3.2M20 13.4l-3.3.6.9 3.2M4 13.4l3.3.6-.9 3.2M20 10.6l-3.3-.6.9-3.2"/></svg>',
-  arc:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 2L5 13.2h6L9.8 22l9.2-12.4h-6.2z"/></svg>',
-  ward:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 5.5l5.5 6.5-5.5 6.5L6.5 12z"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>',
-};
-
-const SPELLS = [
-  { id: 'ember', name: 'Emberlance', key: '1', cost: 6,  cd: 0.22, color: 0xff8a3d, css: 'var(--ember)', auto: true },
-  { id: 'rime',  name: 'Rimeburst',  key: '2', cost: 18, cd: 0.8,  color: 0x8fd8ff, css: 'var(--frost)' },
-  { id: 'arc',   name: 'Skylash',    key: '3', cost: 28, cd: 1.4,  color: 0xc9a7ff, css: 'var(--arc)' },
-  { id: 'ward',  name: 'Stillward',  key: '4', cost: 40, cd: 9,    color: 0xffd56b, css: 'var(--ward)' },
-];
-SPELLS.forEach(s => { s.readyAt = 0; });
-
-/* =========================================================================
-   2. SMALL HELPERS
-   ========================================================================= */
-const $ = id => document.getElementById(id);
-const rand = (a, b) => a + Math.random() * (b - a);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const DEG = Math.PI / 180;
-const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
-const store = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage blocked */ } },
-};
-function pickWeighted(table) {
-  let r = Math.random() * table.reduce((s, x) => s + x[1], 0);
-  for (const [k, w] of table) { if ((r -= w) <= 0) return k; }
-  return table[0][0];
-}
-
-/* =========================================================================
-   3. AUDIO — tiny synth, no files
-   ========================================================================= */
-const Sfx = {
-  ctx: null, master: null, on: store.get('starwatch-sound', true), noiseBuf: null,
-  init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = this.on ? 0.55 : 0;
-    this.master.connect(this.ctx.destination);
-    const len = this.ctx.sampleRate;
-    this.noiseBuf = this.ctx.createBuffer(1, len, len);
-    const d = this.noiseBuf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-  },
-  setOn(v) { this.on = v; store.set('starwatch-sound', v); if (this.master) this.master.gain.value = v ? 0.55 : 0; },
-  tone(f, dur, type = 'sine', vol = 0.2, f2 = null, delay = 0) {
-    const c = this.ctx; if (!c) return;
-    const t = c.currentTime + delay, o = c.createOscillator(), g = c.createGain();
-    o.type = type; o.frequency.setValueAtTime(f, t);
-    if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(this.master); o.start(t); o.stop(t + dur + 0.05);
-  },
-  noise(dur, vol, freq, q = 1, type = 'bandpass', delay = 0) {
-    const c = this.ctx; if (!c) return;
-    const t = c.currentTime + delay, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
-    s.buffer = this.noiseBuf; f.type = type; f.frequency.value = freq; f.Q.value = q;
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f).connect(g).connect(this.master); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.05);
-  },
-  play(name) {
-    if (!this.ctx || !this.on) return;
-    switch (name) {
-      case 'ember': this.noise(0.18, 0.25, 2400, 0.8, 'highpass'); this.tone(880, 0.16, 'triangle', 0.08, 260); break;
-      case 'rime':  this.tone(1300, 0.25, 'sine', 0.08, 2100); this.tone(1950, 0.2, 'sine', 0.05, 2600, 0.03); this.noise(0.25, 0.12, 5200, 4); break;
-      case 'arc':   this.noise(0.32, 0.4, 1800, 0.6); this.tone(90, 0.3, 'sawtooth', 0.12, 45); break;
-      case 'ward':  [392, 494, 587].forEach((f, i) => this.tone(f, 1.1, 'sine', 0.09, null, i * 0.05)); break;
-      case 'hit':   this.tone(240, 0.09, 'square', 0.05, 110); break;
-      case 'kill':  this.tone(660, 0.22, 'sine', 0.1, 1320); this.noise(0.2, 0.12, 3000, 2); break;
-      case 'hurt':  this.tone(130, 0.4, 'sawtooth', 0.18, 55); this.noise(0.3, 0.25, 400, 0.7); break;
-      case 'fizzle':this.tone(200, 0.12, 'triangle', 0.05, 120); break;
-      case 'bell':  [[196, 2.6, 0.22], [392, 1.8, 0.08], [541, 1.4, 0.06], [1058, 0.9, 0.03]].forEach(([f, d, v]) => this.tone(f, d, 'sine', v)); break;
-      case 'dawn':  [262, 330, 392, 523].forEach((f, i) => this.tone(f, 1.8, 'sine', 0.09, null, i * 0.18)); break;
-    }
-  },
-};
-
-/* =========================================================================
-   4. RENDERER, SCENE, CAMERA
-   ========================================================================= */
-const view = $('view');
-let renderer;
-try {
-  renderer = new THREE.WebGLRenderer({ canvas: view, antialias: false, powerPreference: 'high-performance' });
-} catch (e) {
-  $('startNote').textContent = 'This browser could not start 3D graphics (WebGL). Try another browser or turn off battery saver.';
-  $('btnBegin').disabled = true;
-  return;
-}
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
-renderer.setClearColor(0x05060f);
-
-const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x0d1230, 0.0062);
-const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 1200);
-camera.position.copy(EYE);
-scene.add(camera);
-
-/* =========================================================================
-   5. PROCEDURAL TEXTURES — everything is drawn, nothing is downloaded
-   ========================================================================= */
-function canvasTex(w, h, draw) {
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
-  const t = new THREE.CanvasTexture(c); t.anisotropy = 2; return t;
-}
-const TEX = {};
-TEX.glow = canvasTex(64, 64, (g) => {
-  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.22, 'rgba(255,255,255,.7)');
-  gr.addColorStop(0.55, 'rgba(255,255,255,.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
-});
-TEX.sky = canvasTex(4, 512, (g) => {
-  const gr = g.createLinearGradient(0, 0, 0, 512);
-  [[0, '#03041a'], [0.3, '#090e33'], [0.45, '#1a2050'], [0.5, '#2c2b5c'], [0.53, '#151a3c'], [1, '#04050d']]
-    .forEach(([s, c]) => gr.addColorStop(s, c));
-  g.fillStyle = gr; g.fillRect(0, 0, 4, 512);
-});
-TEX.moon = canvasTex(256, 256, (g) => {
-  const gr = g.createRadialGradient(110, 104, 10, 128, 128, 120);
-  gr.addColorStop(0, '#fffbea'); gr.addColorStop(0.75, '#e6dfc4'); gr.addColorStop(1, '#bdb69c');
-  g.fillStyle = gr; g.beginPath(); g.arc(128, 128, 118, 0, Math.PI * 2); g.fill();
-  g.globalAlpha = 0.13; g.fillStyle = '#6c6a5c';
-  [[90, 100, 22], [160, 80, 14], [150, 160, 30], [80, 170, 12], [120, 130, 9], [185, 135, 10]].forEach(([x, y, r]) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); });
-});
-TEX.mountains = canvasTex(2048, 256, (g, w, h) => {
-  // Seamless ridge: only whole-number frequencies around the circle.
-  const ridge = (base, amp, seed) => x => {
-    const a = x / w * Math.PI * 2;
-    return base + amp * (Math.sin(a * 3 + seed) * 0.5 + Math.sin(a * 7 + seed * 2) * 0.3 + Math.sin(a * 17 + seed * 3) * 0.14 + Math.sin(a * 41 + seed) * 0.06);
-  };
-  [[ridge(54, 40, 1.3), '#1a2148'], [ridge(112, 26, 4.1), '#10142c']].forEach(([fn, col]) => {
-    g.fillStyle = col; g.beginPath(); g.moveTo(0, h);
-    for (let x = 0; x <= w; x += 4) g.lineTo(x, fn(x));
-    g.lineTo(w, h); g.closePath(); g.fill();
+/* @module sys ============================================================ */
+// MAP[sys.CFG]: frozen at load. Any write to CFG or EYE throws (strict mode): CANNOT HAPPEN: ILLEGAL, enforced structurally (proof: Object.freeze + 'use strict').
+function makeSys() {
+  const CFG = Object.freeze({
+    maxHP: 100, maxMP: 100, mpRegen: 15, tolls: 8,
+    eyeHeight: 1.6, reachDist: 2.6, healBetweenTolls: 15,
+    spawnDist: Object.freeze([72, 96]), breakSeconds: 3.2,
+    comboWindow: 2.6, flickThreshold: 17,
   });
-});
-TEX.stone = canvasTex(256, 256, (g) => {
-  g.fillStyle = '#5a6078'; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 1600; i++) { g.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${rand(0.02, 0.07)})`; g.fillRect(rand(0, 256), rand(0, 256), rand(1, 4), rand(1, 4)); }
-  g.strokeStyle = 'rgba(15,16,28,.75)'; g.lineWidth = 3;
-  for (let r = 0; r < 4; r++) {
-    const y = r * 64; g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke();
-    for (let c = 0; c < 3; c++) { const x = (c * 96 + (r % 2) * 48) % 256; g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 64); g.stroke(); }
-  }
-});
-TEX.wisp = canvasTex(128, 128, (g) => {
-  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  gr.addColorStop(0, 'rgba(235,255,246,1)'); gr.addColorStop(0.18, 'rgba(150,255,214,.95)');
-  gr.addColorStop(0.45, 'rgba(60,210,170,.45)'); gr.addColorStop(1, 'rgba(20,120,110,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
-  g.fillStyle = 'rgba(8,40,38,.85)';
-  g.beginPath(); g.ellipse(55, 62, 4, 6.5, 0, 0, Math.PI * 2); g.ellipse(73, 62, 4, 6.5, 0, 0, Math.PI * 2); g.fill();
-});
-TEX.shade = canvasTex(128, 128, (g) => {
-  g.save(); g.shadowColor = 'rgba(180,140,255,.9)'; g.shadowBlur = 16;
-  g.beginPath(); g.moveTo(64, 12);
-  g.bezierCurveTo(98, 14, 106, 52, 101, 86);
-  [[108, 118], [94, 104], [86, 120], [74, 106], [64, 122], [54, 106], [42, 120], [34, 104], [20, 118], [27, 86]].forEach(([x, y]) => g.lineTo(x, y));
-  g.bezierCurveTo(22, 52, 30, 14, 64, 12); g.closePath();
-  const gr = g.createLinearGradient(0, 12, 0, 122);
-  gr.addColorStop(0, 'rgba(126,86,206,.96)'); gr.addColorStop(1, 'rgba(60,30,120,.12)');
-  g.fillStyle = gr; g.fill(); g.restore();
-  g.fillStyle = 'rgba(8,4,20,.96)'; g.beginPath(); g.ellipse(64, 52, 18, 22, 0, 0, Math.PI * 2); g.fill();
-  g.shadowColor = '#e9d8ff'; g.shadowBlur = 10; g.fillStyle = '#f3eaff';
-  g.beginPath(); g.ellipse(56, 50, 3.6, 2.2, 0.15, 0, Math.PI * 2); g.ellipse(72, 50, 3.6, 2.2, -0.15, 0, Math.PI * 2); g.fill();
-});
-TEX.gargoyle = canvasTex(256, 128, (g) => {
-  const stone = '#3d4054', edge = '#7a7f9c';
-  g.lineWidth = 2; g.strokeStyle = edge; g.fillStyle = stone;
-  for (const s of [-1, 1]) {
-    const X = v => 128 + s * v;
-    g.beginPath(); g.moveTo(X(14), 54);
-    g.quadraticCurveTo(X(70), 6, X(124), 20);
-    g.quadraticCurveTo(X(104), 50, X(110), 74);
-    g.quadraticCurveTo(X(88), 60, X(80), 82);
-    g.quadraticCurveTo(X(60), 64, X(48), 86);
-    g.quadraticCurveTo(X(32), 70, X(16), 86);
-    g.closePath(); g.fill(); g.stroke();
-    g.beginPath(); g.moveTo(X(18), 56); g.lineTo(X(110), 74); g.moveTo(X(18), 56); g.lineTo(X(80), 82); g.moveTo(X(18), 56); g.lineTo(X(48), 86);
-    g.strokeStyle = 'rgba(122,127,156,.5)'; g.stroke(); g.strokeStyle = edge;
-    g.beginPath(); g.moveTo(X(8), 34); g.lineTo(X(17), 12); g.lineTo(X(4), 30); g.closePath(); g.fill(); g.stroke();
-  }
-  g.beginPath(); g.ellipse(128, 76, 20, 30, 0, 0, Math.PI * 2); g.fill(); g.stroke();
-  g.beginPath(); g.arc(128, 42, 15, 0, Math.PI * 2); g.fill(); g.stroke();
-  g.shadowColor = '#ff3b2f'; g.shadowBlur = 12; g.fillStyle = '#ff6a4a';
-  g.beginPath(); g.moveTo(119, 40); g.lineTo(126, 42); g.lineTo(120, 45); g.closePath();
-  g.moveTo(137, 40); g.lineTo(130, 42); g.lineTo(136, 45); g.closePath(); g.fill();
-});
-
-/* =========================================================================
-   6. WORLD — sky, moon, mountains, castle, our battlement, torches
-   ========================================================================= */
-const World = {};
-(function buildWorld() {
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(600, 32, 16),
-    new THREE.MeshBasicMaterial({ map: TEX.sky, side: THREE.BackSide, fog: false, depthWrite: false }));
-  sky.position.copy(EYE); scene.add(sky);
-
-  // Stars
-  const N = 1400, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    const yaw = Math.random() * Math.PI * 2, el = Math.asin(rand(0.04, 1));
-    pos.set([Math.cos(yaw) * Math.cos(el) * 520, Math.sin(el) * 520, Math.sin(yaw) * Math.cos(el) * 520], i * 3);
-    const warm = Math.random(); col.set(warm < 0.15 ? [1, 0.85, 0.7] : warm < 0.3 ? [0.75, 0.85, 1] : [1, 1, 1], i * 3);
-  }
-  const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  World.starMat = new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.9, fog: false, depthWrite: false });
-  scene.add(new THREE.Points(sg, World.starMat));
-
-  // Moon, front-left and high
-  const mdir = new THREE.Vector3(Math.sin(-38 * DEG) * Math.cos(30 * DEG), Math.sin(30 * DEG), -Math.cos(-38 * DEG) * Math.cos(30 * DEG));
-  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.moon, fog: false, depthWrite: false }));
-  moon.position.copy(mdir).multiplyScalar(480); moon.scale.set(34, 34, 1); scene.add(moon);
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xaebdff, transparent: true, opacity: 0.35, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }));
-  halo.position.copy(moon.position); halo.scale.set(150, 150, 1); scene.add(halo);
-
-  // Dawn glow to the east, grows with each toll
-  World.dawn = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xff9a5c, transparent: true, opacity: 0, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }));
-  World.dawn.position.set(470, 8, 40); World.dawn.scale.set(700, 180, 1); scene.add(World.dawn);
-
-  // Mountains ring
-  TEX.mountains.wrapS = THREE.RepeatWrapping; TEX.mountains.repeat.x = 2;
-  const mtn = new THREE.Mesh(new THREE.CylinderGeometry(330, 330, 160, 64, 1, true),
-    new THREE.MeshBasicMaterial({ map: TEX.mountains, transparent: true, side: THREE.BackSide, fog: false, depthWrite: false }));
-  mtn.position.y = -40; scene.add(mtn);
-
-  // Valley floor far below
-  const ground = new THREE.Mesh(new THREE.CircleGeometry(700, 48), new THREE.MeshLambertMaterial({ color: 0x0c1124 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.y = -72; scene.add(ground);
-  const lake = new THREE.Mesh(new THREE.CircleGeometry(60, 40), new THREE.MeshBasicMaterial({ color: 0x1a2554 }));
-  lake.rotation.x = -Math.PI / 2; lake.position.set(-70, -71.8, -110); scene.add(lake);
-
-  // Lights
-  World.hemi = new THREE.HemisphereLight(0x8592ff, 0x1a1020, 0.6); scene.add(World.hemi);
-  const moonLight = new THREE.DirectionalLight(0xaab8ff, 0.55); moonLight.position.copy(mdir).multiplyScalar(100); scene.add(moonLight);
-
-  const stoneMat = new THREE.MeshLambertMaterial({ map: TEX.stone, color: 0xa4aac4 });
-  const darkStone = new THREE.MeshLambertMaterial({ map: TEX.stone, color: 0x5e647e });
-  const slate = new THREE.MeshLambertMaterial({ color: 0x272d4c });
-  const windowMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
-
-  // Distant towers of the castle
-  const addTower = (x, z, topY, r) => {
-    const h = topY + 72;
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.12, h, 14), darkStone);
-    body.position.set(x, topY - h / 2, z); scene.add(body);
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(r * 1.25, r * 2.8, 14), slate);
-    roof.position.set(x, topY + r * 1.4, z); scene.add(roof);
-    const face = Math.atan2(-x, -z);
-    for (let i = 0; i < 4; i++) {
-      if (Math.random() < 0.3) continue;
-      const w = new THREE.Mesh(new THREE.PlaneGeometry(r * 0.24, r * 0.42), windowMat);
-      const a = face + rand(-0.5, 0.5);
-      w.position.set(x + Math.sin(a) * (r + 0.05), topY - 3 - i * rand(4, 7), z + Math.cos(a) * (r + 0.05));
-      w.rotation.y = a; scene.add(w);
-    }
-  };
-  [[-20, -34, -7, 2.6], [24, -42, -3, 3.2], [-44, 12, -15, 4.2], [34, 26, -11, 3], [9, 52, -5, 2.4], [-30, -70, 3, 3.6], [62, -14, -18, 4.6]]
-    .forEach(t => addTower(...t));
-  const hall = new THREE.Mesh(new THREE.BoxGeometry(14, 30, 40), darkStone);
-  hall.position.set(-12, -50, -14); hall.rotation.y = 0.5; scene.add(hall);
-  const hallRoof = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 9, 40, 4, 1), slate);
-  hallRoof.rotation.set(Math.PI / 2, 0, Math.PI / 4); hallRoof.position.set(-12, -31, -14); scene.add(hallRoof);
-
-  // Our tower top: floor, parapet, merlons, tower shaft
-  const R = 3.3, SEG = 20, segW = 2 * R * Math.tan(Math.PI / SEG) + 0.03;
-  TEX.floor = TEX.stone.clone(); TEX.floor.needsUpdate = true; TEX.floor.wrapS = TEX.floor.wrapT = THREE.RepeatWrapping; TEX.floor.repeat.set(3, 3);
-  const floor = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.3, R + 0.3, 0.3, 40), new THREE.MeshLambertMaterial({ map: TEX.floor, color: 0x8a90aa }));
-  floor.position.y = -0.15; scene.add(floor);
-  const wallGeo = new THREE.BoxGeometry(segW, 0.95, 0.45), merlonGeo = new THREE.BoxGeometry(segW * 0.9, 0.45, 0.5);
-  for (let i = 0; i < SEG; i++) {
-    const a = (i + 0.5) / SEG * Math.PI * 2, x = Math.sin(a) * R, z = -Math.cos(a) * R;
-    const wall = new THREE.Mesh(wallGeo, stoneMat); wall.position.set(x, 0.475, z); wall.rotation.y = -a; scene.add(wall);
-    if (i % 2 === 0) { const m = new THREE.Mesh(merlonGeo, stoneMat); m.position.set(x, 1.175, z); m.rotation.y = -a; scene.add(m); }
-  }
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(3.7, 4.4, 72, 24, 1, true), darkStone);
-  shaft.position.y = -36.3; scene.add(shaft);
-
-  // Two torches on the parapet, either side of "forward"
-  World.torches = [];
-  [-48, 48].forEach(d => {
-    const a = d * DEG, x = Math.sin(a) * (R - 0.25), z = -Math.cos(a) * (R - 0.25);
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.5, 6), new THREE.MeshLambertMaterial({ color: 0x3b2a1e }));
-    stick.position.set(x, 1.2, z); scene.add(stick);
-    const outer = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xff7a2a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-    const inner = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-    outer.position.set(x, 1.55, z); inner.position.set(x, 1.52, z); scene.add(outer, inner);
-    const light = new THREE.PointLight(0xff9a4a, 1.3, 9, 2); light.position.set(x, 1.6, z); scene.add(light);
-    World.torches.push({ outer, inner, light, seed: Math.random() * 10 });
+  const EYE = Object.freeze(new THREE.Vector3(0, CFG.eyeHeight, 0));
+  const $ = id => document.getElementById(id);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const DEG = Math.PI / 180;
+  const ROMAN = Object.freeze(['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']);
+  const store = Object.freeze({
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage blocked */ } },
   });
-})();
+  function pickWeighted(table) {
+    let r = Math.random() * table.reduce((s, x) => s + x[1], 0);
+    for (const [k, w] of table) { if ((r -= w) <= 0) return k; }
+    return table[0][0];
+  }
+  return Object.freeze({ CFG, EYE, $, rand, clamp, DEG, ROMAN, store, pickWeighted });
+}
+/* @end sys */
 
-/* =========================================================================
-   7. WAND — child of the camera, bottom-right of the view
-   ========================================================================= */
-const Wand = { group: new THREE.Group(), pivot: new THREE.Group(), tip: new THREE.Object3D(), kick: 0, color: new THREE.Color(SPELLS[0].color) };
-(function buildWand() {
-  const wood = new THREE.MeshLambertMaterial({ color: 0x6b4a32 }), dark = new THREE.MeshLambertMaterial({ color: 0x2e2018 });
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.0055, 0.013, 0.34, 8), wood); shaft.position.y = 0.17;
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.015, 0.12, 10), dark); handle.position.y = -0.02;
-  const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.019, 0.012, 10), wood); ring.position.y = 0.045;
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 8), dark); knob.position.y = -0.085;
-  Wand.tip.position.y = 0.34;
-  Wand.glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: SPELLS[0].color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
-  Wand.glow.scale.set(0.06, 0.06, 1); Wand.tip.add(Wand.glow);
-  Wand.pivot.add(shaft, handle, ring, knob, Wand.tip);
-  Wand.pivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(-0.22, 0.34, -2.1).normalize());
-  Wand.group.add(Wand.pivot); Wand.group.position.set(0.2, -0.25, -0.5);
-  camera.add(Wand.group);
-})();
-
-/* =========================================================================
-   8. LOOK — device orientation (gyro) with drag fallback
-   ========================================================================= */
-const Look = {
-  sensor: false, last: null, needRecenter: true, yawOffset: 0,
-  dragYaw: 0, dragPitch: 0, target: new THREE.Quaternion(),
-  _euler: new THREE.Euler(), _q0: new THREE.Quaternion(), _q1: new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)),
-  _qy: new THREE.Quaternion(), _fwd: new THREE.Vector3(), _z: new THREE.Vector3(0, 0, 1), _y: new THREE.Vector3(0, 1, 0),
-};
-function screenAngle() {
-  const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
-  return a * DEG;
-}
-/* Motion sources, best first:
-   1. 'sensor'  — Generic Sensor API (Chrome / Samsung Internet on Android): fused gyro quaternion, smooth, no yaw drift jumps.
-   2. 'event'   — deviceorientation events (iOS Safari, Firefox, older Android).
-   3. 'absolute'— deviceorientationabsolute (some Android builds only send compass-based angles).
-   Whichever answers first with real data wins; a better source takes over if it starts later. */
-const Motion = { source: 'none', sensor: null, sq: new THREE.Quaternion(), relAlpha: false, reason: '', listening: false };
-const RANK = { none: 0, absolute: 1, event: 2, sensor: 3 };
-function useSource(src) {
-  if (RANK[src] < RANK[Motion.source]) return false;
-  if (src !== Motion.source) { Motion.source = src; Look.needRecenter = true; updateMotionChip(); }
-  Look.sensor = true; return true;
-}
-function onDeviceOrientation(e) {
-  if (e.beta == null || e.gamma == null) return;
-  if (e.alpha != null) Motion.relAlpha = true;
-  if (!useSource('event')) return;
-  Look.last = { a: (e.alpha || 0) * DEG, b: e.beta * DEG, g: e.gamma * DEG };
-}
-function onDeviceOrientationAbsolute(e) {
-  if (Motion.relAlpha || e.alpha == null || e.beta == null) return;
-  if (!useSource('absolute')) return;
-  Look.last = { a: e.alpha * DEG, b: e.beta * DEG, g: (e.gamma || 0) * DEG };
-}
-function startOrientationSensor() {
-  if (Motion.sensor || !('RelativeOrientationSensor' in window)) return;
-  const go = () => {
-    try {
-      const s = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'device' });
-      s.addEventListener('reading', () => { if (s.quaternion && useSource('sensor')) Motion.sq.fromArray(s.quaternion); });
-      s.addEventListener('error', ev => { Motion.reason = (ev.error && ev.error.name) || 'SensorError'; Motion.sensor = null; try { s.stop(); } catch (err) { /* stopped */ } });
-      s.start(); Motion.sensor = s;
-    } catch (err) { Motion.reason = err.name || 'SensorError'; }
+/* @module audio ========================================================== */
+// tiny synth, no files. Owns the AudioContext, master gain, noise buffer and the mute state (key starwatch-sound).
+function makeAudio(sys) {
+  const store = sys.store;
+  const Sfx = {
+    ctx: null, master: null, on: store.get('starwatch-sound', true), noiseBuf: null,
+    init() {
+      if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.on ? 0.55 : 0;
+      this.master.connect(this.ctx.destination);
+      const len = this.ctx.sampleRate;
+      this.noiseBuf = this.ctx.createBuffer(1, len, len);
+      const d = this.noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    },
+    setOn(v) { this.on = v; store.set('starwatch-sound', v); if (this.master) this.master.gain.value = v ? 0.55 : 0; },
+    tone(f, dur, type = 'sine', vol = 0.2, f2 = null, delay = 0) {
+      const c = this.ctx; if (!c) return;
+      const t = c.currentTime + delay, o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.setValueAtTime(f, t);
+      if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(this.master); o.start(t); o.stop(t + dur + 0.05);
+    },
+    noise(dur, vol, freq, q = 1, type = 'bandpass', delay = 0) {
+      const c = this.ctx; if (!c) return;
+      const t = c.currentTime + delay, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+      s.buffer = this.noiseBuf; f.type = type; f.frequency.value = freq; f.Q.value = q;
+      g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      s.connect(f).connect(g).connect(this.master); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.05);
+    },
+    play(name) {
+      if (!this.ctx || !this.on) return;
+      switch (name) {
+        case 'ember': this.noise(0.18, 0.25, 2400, 0.8, 'highpass'); this.tone(880, 0.16, 'triangle', 0.08, 260); break;
+        case 'rime':  this.tone(1300, 0.25, 'sine', 0.08, 2100); this.tone(1950, 0.2, 'sine', 0.05, 2600, 0.03); this.noise(0.25, 0.12, 5200, 4); break;
+        case 'arc':   this.noise(0.32, 0.4, 1800, 0.6); this.tone(90, 0.3, 'sawtooth', 0.12, 45); break;
+        case 'ward':  [392, 494, 587].forEach((f, i) => this.tone(f, 1.1, 'sine', 0.09, null, i * 0.05)); break;
+        case 'hit':   this.tone(240, 0.09, 'square', 0.05, 110); break;
+        case 'kill':  this.tone(660, 0.22, 'sine', 0.1, 1320); this.noise(0.2, 0.12, 3000, 2); break;
+        case 'hurt':  this.tone(130, 0.4, 'sawtooth', 0.18, 55); this.noise(0.3, 0.25, 400, 0.7); break;
+        case 'fizzle':this.tone(200, 0.12, 'triangle', 0.05, 120); break;
+        case 'bell':  [[196, 2.6, 0.22], [392, 1.8, 0.08], [541, 1.4, 0.06], [1058, 0.9, 0.03]].forEach(([f, d, v]) => this.tone(f, d, 'sine', v)); break;
+        case 'dawn':  [262, 330, 392, 523].forEach((f, i) => this.tone(f, 1.8, 'sine', 0.09, null, i * 0.18)); break;
+      }
+    },
   };
-  if (navigator.permissions && navigator.permissions.query) {
-    Promise.all(['accelerometer', 'gyroscope'].map(n => navigator.permissions.query({ name: n }).then(r => r.state, () => 'granted')))
-      .then(states => { if (states.includes('denied')) Motion.reason = 'NotAllowedError'; else go(); }, go);
-  } else go();
+  // MAP[audio.isOn]: read-only accessor for the mute state, added by o3 (O3-08) so game_interface can toggle it and mirror it on the Sound button.
+  return Object.freeze({
+    init() { Sfx.init(); },
+    setOn(v) { Sfx.setOn(v); },
+    play(name) { Sfx.play(name); },
+    isOn() { return Sfx.on; },
+  });
 }
-function listenOrientation() {
-  if (Motion.listening) return;
-  Motion.listening = true;
-  window.addEventListener('deviceorientation', onDeviceOrientation);
-  window.addEventListener('deviceorientationabsolute', onDeviceOrientationAbsolute);
-  window.addEventListener('devicemotion', onDeviceMotion);
-  startOrientationSensor();
+/* @end audio */
+
+/* @module scene ========================================================== */
+// RENDERER, SCENE, CAMERA, PROCEDURAL TEXTURES, WORLD, WAND, PARTICLES. Nothing of these is handed out:
+// other modules use stage / setViewOrientation / kickWand / flashSky / updateAmbience / clearEffects /
+// render / resize / emit / burst / updateParticles, and read through view. TEX is lent read-only (EX-2).
+function makeScene(sys) {
+  const { EYE, DEG, rand, clamp } = sys;
+  const view = sys.$('view');
+  let renderer;
+  // MAP[scene.renderer]: IF WebGL cannot be created ⇒ report { unavailable: 'webgl' } to sys.boot and build nothing else. scene no longer writes the start note or Begin (F-05 #19; D-08).
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: view, antialias: false, powerPreference: 'high-performance' });
+  } catch (e) {
+    return { unavailable: 'webgl' };
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+  renderer.setClearColor(0x05060f);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x0d1230, 0.0062);
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 1200);
+  camera.position.copy(EYE);
+  scene.add(camera);
+
+  /* ---- procedural textures: everything is drawn, nothing is downloaded ---- */
+  function canvasTex(w, h, draw) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    draw(c.getContext('2d'), w, h);
+    const t = new THREE.CanvasTexture(c); t.anisotropy = 2; return t;
+  }
+  const TEX = {};
+  TEX.glow = canvasTex(64, 64, (g) => {
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.22, 'rgba(255,255,255,.7)');
+    gr.addColorStop(0.55, 'rgba(255,255,255,.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  });
+  TEX.sky = canvasTex(4, 512, (g) => {
+    const gr = g.createLinearGradient(0, 0, 0, 512);
+    [[0, '#03041a'], [0.3, '#090e33'], [0.45, '#1a2050'], [0.5, '#2c2b5c'], [0.53, '#151a3c'], [1, '#04050d']]
+      .forEach(([s, c]) => gr.addColorStop(s, c));
+    g.fillStyle = gr; g.fillRect(0, 0, 4, 512);
+  });
+  TEX.moon = canvasTex(256, 256, (g) => {
+    const gr = g.createRadialGradient(110, 104, 10, 128, 128, 120);
+    gr.addColorStop(0, '#fffbea'); gr.addColorStop(0.75, '#e6dfc4'); gr.addColorStop(1, '#bdb69c');
+    g.fillStyle = gr; g.beginPath(); g.arc(128, 128, 118, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 0.13; g.fillStyle = '#6c6a5c';
+    [[90, 100, 22], [160, 80, 14], [150, 160, 30], [80, 170, 12], [120, 130, 9], [185, 135, 10]].forEach(([x, y, r]) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); });
+  });
+  TEX.mountains = canvasTex(2048, 256, (g, w, h) => {
+    // Seamless ridge: only whole-number frequencies around the circle.
+    const ridge = (base, amp, seed) => x => {
+      const a = x / w * Math.PI * 2;
+      return base + amp * (Math.sin(a * 3 + seed) * 0.5 + Math.sin(a * 7 + seed * 2) * 0.3 + Math.sin(a * 17 + seed * 3) * 0.14 + Math.sin(a * 41 + seed) * 0.06);
+    };
+    [[ridge(54, 40, 1.3), '#1a2148'], [ridge(112, 26, 4.1), '#10142c']].forEach(([fn, col]) => {
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, h);
+      for (let x = 0; x <= w; x += 4) g.lineTo(x, fn(x));
+      g.lineTo(w, h); g.closePath(); g.fill();
+    });
+  });
+  TEX.stone = canvasTex(256, 256, (g) => {
+    g.fillStyle = '#5a6078'; g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 1600; i++) { g.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},${rand(0.02, 0.07)})`; g.fillRect(rand(0, 256), rand(0, 256), rand(1, 4), rand(1, 4)); }
+    g.strokeStyle = 'rgba(15,16,28,.75)'; g.lineWidth = 3;
+    for (let r = 0; r < 4; r++) {
+      const y = r * 64; g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke();
+      for (let c = 0; c < 3; c++) { const x = (c * 96 + (r % 2) * 48) % 256; g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 64); g.stroke(); }
+    }
+  });
+  TEX.wisp = canvasTex(128, 128, (g) => {
+    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(235,255,246,1)'); gr.addColorStop(0.18, 'rgba(150,255,214,.95)');
+    gr.addColorStop(0.45, 'rgba(60,210,170,.45)'); gr.addColorStop(1, 'rgba(20,120,110,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = 'rgba(8,40,38,.85)';
+    g.beginPath(); g.ellipse(55, 62, 4, 6.5, 0, 0, Math.PI * 2); g.ellipse(73, 62, 4, 6.5, 0, 0, Math.PI * 2); g.fill();
+  });
+  TEX.shade = canvasTex(128, 128, (g) => {
+    g.save(); g.shadowColor = 'rgba(180,140,255,.9)'; g.shadowBlur = 16;
+    g.beginPath(); g.moveTo(64, 12);
+    g.bezierCurveTo(98, 14, 106, 52, 101, 86);
+    [[108, 118], [94, 104], [86, 120], [74, 106], [64, 122], [54, 106], [42, 120], [34, 104], [20, 118], [27, 86]].forEach(([x, y]) => g.lineTo(x, y));
+    g.bezierCurveTo(22, 52, 30, 14, 64, 12); g.closePath();
+    const gr = g.createLinearGradient(0, 12, 0, 122);
+    gr.addColorStop(0, 'rgba(126,86,206,.96)'); gr.addColorStop(1, 'rgba(60,30,120,.12)');
+    g.fillStyle = gr; g.fill(); g.restore();
+    g.fillStyle = 'rgba(8,4,20,.96)'; g.beginPath(); g.ellipse(64, 52, 18, 22, 0, 0, Math.PI * 2); g.fill();
+    g.shadowColor = '#e9d8ff'; g.shadowBlur = 10; g.fillStyle = '#f3eaff';
+    g.beginPath(); g.ellipse(56, 50, 3.6, 2.2, 0.15, 0, Math.PI * 2); g.ellipse(72, 50, 3.6, 2.2, -0.15, 0, Math.PI * 2); g.fill();
+  });
+  TEX.gargoyle = canvasTex(256, 128, (g) => {
+    const stone = '#3d4054', edge = '#7a7f9c';
+    g.lineWidth = 2; g.strokeStyle = edge; g.fillStyle = stone;
+    for (const s of [-1, 1]) {
+      const X = v => 128 + s * v;
+      g.beginPath(); g.moveTo(X(14), 54);
+      g.quadraticCurveTo(X(70), 6, X(124), 20);
+      g.quadraticCurveTo(X(104), 50, X(110), 74);
+      g.quadraticCurveTo(X(88), 60, X(80), 82);
+      g.quadraticCurveTo(X(60), 64, X(48), 86);
+      g.quadraticCurveTo(X(32), 70, X(16), 86);
+      g.closePath(); g.fill(); g.stroke();
+      g.beginPath(); g.moveTo(X(18), 56); g.lineTo(X(110), 74); g.moveTo(X(18), 56); g.lineTo(X(80), 82); g.moveTo(X(18), 56); g.lineTo(X(48), 86);
+      g.strokeStyle = 'rgba(122,127,156,.5)'; g.stroke(); g.strokeStyle = edge;
+      g.beginPath(); g.moveTo(X(8), 34); g.lineTo(X(17), 12); g.lineTo(X(4), 30); g.closePath(); g.fill(); g.stroke();
+    }
+    g.beginPath(); g.ellipse(128, 76, 20, 30, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.beginPath(); g.arc(128, 42, 15, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.shadowColor = '#ff3b2f'; g.shadowBlur = 12; g.fillStyle = '#ff6a4a';
+    g.beginPath(); g.moveTo(119, 40); g.lineTo(126, 42); g.lineTo(120, 45); g.closePath();
+    g.moveTo(137, 40); g.lineTo(130, 42); g.lineTo(136, 45); g.closePath(); g.fill();
+  });
+
+  /* ---- world: sky, moon, mountains, castle, our battlement, torches ---- */
+  const World = {};
+  (function buildWorld() {
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(600, 32, 16),
+      new THREE.MeshBasicMaterial({ map: TEX.sky, side: THREE.BackSide, fog: false, depthWrite: false }));
+    sky.position.copy(EYE); scene.add(sky);
+
+    // Stars
+    const N = 1400, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const yaw = Math.random() * Math.PI * 2, el = Math.asin(rand(0.04, 1));
+      pos.set([Math.cos(yaw) * Math.cos(el) * 520, Math.sin(el) * 520, Math.sin(yaw) * Math.cos(el) * 520], i * 3);
+      const warm = Math.random(); col.set(warm < 0.15 ? [1, 0.85, 0.7] : warm < 0.3 ? [0.75, 0.85, 1] : [1, 1, 1], i * 3);
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    World.starMat = new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.9, fog: false, depthWrite: false });
+    scene.add(new THREE.Points(sg, World.starMat));
+
+    // Moon, front-left and high
+    const mdir = new THREE.Vector3(Math.sin(-38 * DEG) * Math.cos(30 * DEG), Math.sin(30 * DEG), -Math.cos(-38 * DEG) * Math.cos(30 * DEG));
+    const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.moon, fog: false, depthWrite: false }));
+    moon.position.copy(mdir).multiplyScalar(480); moon.scale.set(34, 34, 1); scene.add(moon);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xaebdff, transparent: true, opacity: 0.35, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+    halo.position.copy(moon.position); halo.scale.set(150, 150, 1); scene.add(halo);
+
+    // Dawn glow to the east, grows with each toll
+    World.dawn = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xff9a5c, transparent: true, opacity: 0, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+    World.dawn.position.set(470, 8, 40); World.dawn.scale.set(700, 180, 1); scene.add(World.dawn);
+
+    // Mountains ring
+    TEX.mountains.wrapS = THREE.RepeatWrapping; TEX.mountains.repeat.x = 2;
+    const mtn = new THREE.Mesh(new THREE.CylinderGeometry(330, 330, 160, 64, 1, true),
+      new THREE.MeshBasicMaterial({ map: TEX.mountains, transparent: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+    mtn.position.y = -40; scene.add(mtn);
+
+    // Valley floor far below
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(700, 48), new THREE.MeshLambertMaterial({ color: 0x0c1124 }));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -72; scene.add(ground);
+    const lake = new THREE.Mesh(new THREE.CircleGeometry(60, 40), new THREE.MeshBasicMaterial({ color: 0x1a2554 }));
+    lake.rotation.x = -Math.PI / 2; lake.position.set(-70, -71.8, -110); scene.add(lake);
+
+    // Lights
+    World.hemi = new THREE.HemisphereLight(0x8592ff, 0x1a1020, 0.6); scene.add(World.hemi);
+    const moonLight = new THREE.DirectionalLight(0xaab8ff, 0.55); moonLight.position.copy(mdir).multiplyScalar(100); scene.add(moonLight);
+
+    const stoneMat = new THREE.MeshLambertMaterial({ map: TEX.stone, color: 0xa4aac4 });
+    const darkStone = new THREE.MeshLambertMaterial({ map: TEX.stone, color: 0x5e647e });
+    const slate = new THREE.MeshLambertMaterial({ color: 0x272d4c });
+    const windowMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+
+    // Distant towers of the castle
+    const addTower = (x, z, topY, r) => {
+      const h = topY + 72;
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.12, h, 14), darkStone);
+      body.position.set(x, topY - h / 2, z); scene.add(body);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(r * 1.25, r * 2.8, 14), slate);
+      roof.position.set(x, topY + r * 1.4, z); scene.add(roof);
+      const face = Math.atan2(-x, -z);
+      for (let i = 0; i < 4; i++) {
+        if (Math.random() < 0.3) continue;
+        const w = new THREE.Mesh(new THREE.PlaneGeometry(r * 0.24, r * 0.42), windowMat);
+        const a = face + rand(-0.5, 0.5);
+        w.position.set(x + Math.sin(a) * (r + 0.05), topY - 3 - i * rand(4, 7), z + Math.cos(a) * (r + 0.05));
+        w.rotation.y = a; scene.add(w);
+      }
+    };
+    [[-20, -34, -7, 2.6], [24, -42, -3, 3.2], [-44, 12, -15, 4.2], [34, 26, -11, 3], [9, 52, -5, 2.4], [-30, -70, 3, 3.6], [62, -14, -18, 4.6]]
+      .forEach(t => addTower(...t));
+    const hall = new THREE.Mesh(new THREE.BoxGeometry(14, 30, 40), darkStone);
+    hall.position.set(-12, -50, -14); hall.rotation.y = 0.5; scene.add(hall);
+    const hallRoof = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 9, 40, 4, 1), slate);
+    hallRoof.rotation.set(Math.PI / 2, 0, Math.PI / 4); hallRoof.position.set(-12, -31, -14); scene.add(hallRoof);
+
+    // Our tower top: floor, parapet, merlons, tower shaft
+    const R = 3.3, SEG = 20, segW = 2 * R * Math.tan(Math.PI / SEG) + 0.03;
+    TEX.floor = TEX.stone.clone(); TEX.floor.needsUpdate = true; TEX.floor.wrapS = TEX.floor.wrapT = THREE.RepeatWrapping; TEX.floor.repeat.set(3, 3);
+    const floor = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.3, R + 0.3, 0.3, 40), new THREE.MeshLambertMaterial({ map: TEX.floor, color: 0x8a90aa }));
+    floor.position.y = -0.15; scene.add(floor);
+    const wallGeo = new THREE.BoxGeometry(segW, 0.95, 0.45), merlonGeo = new THREE.BoxGeometry(segW * 0.9, 0.45, 0.5);
+    for (let i = 0; i < SEG; i++) {
+      const a = (i + 0.5) / SEG * Math.PI * 2, x = Math.sin(a) * R, z = -Math.cos(a) * R;
+      const wall = new THREE.Mesh(wallGeo, stoneMat); wall.position.set(x, 0.475, z); wall.rotation.y = -a; scene.add(wall);
+      if (i % 2 === 0) { const m = new THREE.Mesh(merlonGeo, stoneMat); m.position.set(x, 1.175, z); m.rotation.y = -a; scene.add(m); }
+    }
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(3.7, 4.4, 72, 24, 1, true), darkStone);
+    shaft.position.y = -36.3; scene.add(shaft);
+
+    // Two torches on the parapet, either side of "forward"
+    World.torches = [];
+    [-48, 48].forEach(d => {
+      const a = d * DEG, x = Math.sin(a) * (R - 0.25), z = -Math.cos(a) * (R - 0.25);
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.5, 6), new THREE.MeshLambertMaterial({ color: 0x3b2a1e }));
+      stick.position.set(x, 1.2, z); scene.add(stick);
+      const outer = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xff7a2a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+      const inner = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffe0a0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+      outer.position.set(x, 1.55, z); inner.position.set(x, 1.52, z); scene.add(outer, inner);
+      const light = new THREE.PointLight(0xff9a4a, 1.3, 9, 2); light.position.set(x, 1.6, z); scene.add(light);
+      World.torches.push({ outer, inner, light, seed: Math.random() * 10 });
+    });
+  })();
+  Object.freeze(TEX);   // EX-2: the map of lent textures cannot be re-pointed; borrowers must not mutate a texture (checked by A1).
+
+  /* ---- wand: child of the camera, bottom-right of the view ---- */
+  // The glow colour is the first spell's (combat.view); it is set by wire() before the first frame.
+  const Wand = { group: new THREE.Group(), pivot: new THREE.Group(), tip: new THREE.Object3D(), kick: 0, color: new THREE.Color(0xffffff) };
+  (function buildWand() {
+    const wood = new THREE.MeshLambertMaterial({ color: 0x6b4a32 }), dark = new THREE.MeshLambertMaterial({ color: 0x2e2018 });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.0055, 0.013, 0.34, 8), wood); shaft.position.y = 0.17;
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.015, 0.12, 10), dark); handle.position.y = -0.02;
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.019, 0.012, 10), wood); ring.position.y = 0.045;
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 8), dark); knob.position.y = -0.085;
+    Wand.tip.position.y = 0.34;
+    Wand.glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+    Wand.glow.scale.set(0.06, 0.06, 1); Wand.tip.add(Wand.glow);
+    Wand.pivot.add(shaft, handle, ring, knob, Wand.tip);
+    Wand.pivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(-0.22, 0.34, -2.1).normalize());
+    Wand.group.add(Wand.pivot); Wand.group.position.set(0.2, -0.25, -0.5);
+    camera.add(Wand.group);
+  })();
+
+  /* ---- particles: pooled additive sprites ---- */
+  const Particles = { pool: [], next: 0 };
+  for (let i = 0; i < 280; i++) {
+    const mat = new THREE.SpriteMaterial({ map: TEX.glow, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+    const s = new THREE.Sprite(mat); s.visible = false; scene.add(s);
+    Particles.pool.push({ s, mat, vel: new THREE.Vector3(), life: 0, max: 1, size: 1, grow: 0 });
+  }
+  const sTmpA = new THREE.Vector3();   // scene-local scratch (D-10)
+  function emit(pos, color, vel, life, size, grow = 0) {
+    const p = Particles.pool[Particles.next]; Particles.next = (Particles.next + 1) % Particles.pool.length;
+    p.s.position.copy(pos); p.vel.copy(vel); p.life = p.max = life; p.size = size; p.grow = grow;
+    p.mat.color.set(color); p.s.visible = true;
+  }
+  // MAP[scene.burst]: uses scene-local scratch only. The baseline hazard (combat.updateShots and burst sharing tmpA) is gone by construction (D-10).
+  function burst(pos, color, n, speed, size) {
+    for (let i = 0; i < n; i++) {
+      sTmpA.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(speed * 0.3, speed));
+      emit(pos, color, sTmpA, rand(0.35, 0.8), size * rand(0.6, 1.2), -0.3);
+    }
+  }
+  function updateParticles(dt) {
+    for (const p of Particles.pool) {
+      if (!p.s.visible) continue;
+      p.life -= dt; if (p.life <= 0) { p.s.visible = false; continue; }
+      p.s.position.addScaledVector(p.vel, dt); p.vel.multiplyScalar(1 - 1.8 * dt);
+      const k = p.life / p.max, sc = Math.max(0.01, p.size * (1 + p.grow * (1 - k)));
+      p.s.scale.set(sc, sc, 1); p.mat.opacity = k;
+    }
+  }
+  // MAP[scene.clearEffects]: hides every pooled particle; allocates and frees nothing.
+  function clearEffects() { for (const p of Particles.pool) p.s.visible = false; }
+
+  /* ---- stage: caller-owned objects in the scene graph (EX-1) ---- */
+  // MAP[scene.stage]: lent objects (EX-1). attach/detach only add or remove the caller's object; scene never changes, disposes or re-parents an attached object otherwise, and refuses to detach anything it did not attach (world, wand, particles are never in `attached`). Proof (if X ⇒ true): X = the only references to `attached` are in attach/detach below ⇒ no caller can remove scene's own objects.
+  const attached = new Set();
+  const stage = Object.freeze({
+    attach(obj) { if (attached.has(obj)) return; attached.add(obj); scene.add(obj); },
+    detach(obj) { if (!attached.has(obj)) return; attached.delete(obj); scene.remove(obj); },
+  });
+
+  /* ---- camera orientation, ambience, render, resize ---- */
+  // MAP[scene.setViewOrientation]: copies the orientation and updates the camera matrices before returning, so every camera reader later in the tick (aimDirection inside a cast, toScreen inside drawFX) sees this tick's orientation (V6). Position and projection are untouched.
+  function setViewOrientation(q) { camera.quaternion.copy(q); camera.updateMatrixWorld(); }
+  const amb = { flash: 0 };   // record field, updated in place (L4)
+  // MAP[scene.flashSky]: set semantics (baseline wrote game.flash = 1). run.resetGame calls flashSky(0) to keep the baseline reset (O3-05).
+  function flashSky(v) { amb.flash = v; }
+  function kickWand(color) { Wand.kick = 1; Wand.color.set(color); Wand.glow.material.color.set(color); }
+  // MAP[scene.updateAmbience]: the baseline ambience block of run.frame, verbatim, minus the shake decay (now input's). worldT is the frame clock run passes in (O3-03).
+  function updateAmbience(dt, worldT, dawnTarget, wandShown) {
+    amb.flash = Math.max(0, amb.flash - dt * 5);
+    World.hemi.intensity = 0.6 + amb.flash * 1.4;
+    World.dawn.material.opacity += (dawnTarget * 0.5 - World.dawn.material.opacity) * dt;
+    World.starMat.opacity = 0.9 - World.dawn.material.opacity * 0.9;
+    World.torches.forEach(tc => {
+      const f = 0.85 + 0.15 * Math.sin(worldT * 13 + tc.seed) * Math.sin(worldT * 7.3 + tc.seed * 2);
+      tc.light.intensity = 1.3 * f; tc.outer.scale.setScalar(0.62 * f); tc.inner.scale.setScalar(0.3 * f);
+    });
+    Wand.kick = Math.max(0, Wand.kick - dt * 6);
+    Wand.group.position.z = -0.5 + Wand.kick * 0.05;
+    Wand.group.rotation.x = Wand.kick * 0.12;
+    Wand.group.visible = wandShown;
+    const g = 0.055 + Wand.kick * 0.08 + Math.sin(worldT * 5) * 0.006; Wand.glow.scale.set(g, g, 1);
+  }
+  function render() { renderer.render(scene, camera); }
+  // MAP[scene.resize]: sizes the WebGL canvas and the camera only; the overlay is hud's (hud.resize), called by game_interface.onResize in the same handler (D-07).
+  function resize() {
+    const W = window.innerWidth, H = window.innerHeight;
+    renderer.setSize(W, H, false);
+    camera.aspect = W / H; camera.fov = W > H ? 62 : 72; camera.updateProjectionMatrix();
+  }
+
+  /* ---- read view: copies into caller targets, no allocation ---- */
+  // MAP[scene.view]: every read copies into a caller-supplied target; camera, renderer, world and wand never leave this scope. canvas() is the #view element for pointer subscription only (EX-3).
+  const view_ = Object.freeze({
+    cameraQuaternion(out) { return out.copy(camera.quaternion); },
+    cameraDirection(out) { return camera.getWorldDirection(out); },
+    cameraPosition(out) { return out.copy(camera.position); },
+    fov() { return camera.fov; },
+    toView(world, out) { return out.copy(world).applyMatrix4(camera.matrixWorldInverse); },
+    project(world, out) { return out.copy(world).project(camera); },
+    wandTip(out) { return Wand.tip.getWorldPosition(out); },
+    canvas() { return view; },
+  });
+
+  let wired = false;
+  function wire(combatView) {
+    if (wired) throw new Error('scene: already wired'); wired = true;
+    const c = combatView.spell(0).color;   // MAP[scene.Wand]: first glow colour = first spell's, read through combat.view (was SPELLS[0].color).
+    Wand.color.set(c); Wand.glow.material.color.set(c);
+  }
+  const api = Object.freeze({ stage, setViewOrientation, kickWand, flashSky, updateAmbience, clearEffects, updateParticles, emit, burst, render, resize, view: view_, TEX });
+  return { api, wire };
 }
-const Q_EARTH_TO_WORLD = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
-function deviceQuat(out) {
-  if (Motion.source === 'sensor') {
-    // Sensor gives device→Earth (Z up). Earth→three world is −90° about X; then undo the screen rotation.
-    out.copy(Q_EARTH_TO_WORLD).multiply(Motion.sq);
-  } else {
-    // Same mapping three.js used for DeviceOrientationControls: phone screen = camera.
+/* @end scene */
+
+/* @module combat ========================================================= */
+// Creatures, shots, bolts, spells and their cooldowns, aether, ward and last spell. Run state is read through
+// run.view and changed only through run.recordBanish / run.recordArrival.
+function makeCombat(sys, audio, scene) {
+  const { CFG, EYE, DEG, rand, clamp, pickWeighted } = sys;
+  const TEX = scene.TEX;
+  let run = null, hud = null;   // wired once by sys.boot
+
+  const ENEMY = Object.freeze({
+    wisp:     Object.freeze({ hp: 1, speed: 7.5, dmg: 8,  radius: 1.4, score: 10, size: 2.3, wobble: 1.4, tint: '#7dffd0' }),
+    shade:    Object.freeze({ hp: 2, speed: 9.0, dmg: 12, radius: 1.6, score: 20, size: 3.1, wobble: 6.0, tint: '#b48cff' }),
+    gargoyle: Object.freeze({ hp: 5, speed: 4.3, dmg: 20, radius: 2.1, score: 40, size: 2.4, wobble: 0.9, tint: '#ff6a4a' }),
+  });
+  const SPELLS = [
+    { id: 'ember', name: 'Emberlance', key: '1', cost: 6,  cd: 0.22, color: 0xff8a3d, css: 'var(--ember)', auto: true },
+    { id: 'rime',  name: 'Rimeburst',  key: '2', cost: 18, cd: 0.8,  color: 0x8fd8ff, css: 'var(--frost)' },
+    { id: 'arc',   name: 'Skylash',    key: '3', cost: 28, cd: 1.4,  color: 0xc9a7ff, css: 'var(--arc)' },
+    { id: 'ward',  name: 'Stillward',  key: '4', cost: 40, cd: 9,    color: 0xffd56b, css: 'var(--ward)' },
+  ];
+  SPELLS.forEach(s => { s.readyAt = 0; });
+  const SPELL_INFO = Object.freeze(SPELLS.map(s => Object.freeze({ id: s.id, name: s.name, key: s.key, cost: s.cost, cd: s.cd, color: s.color, css: s.css, auto: !!s.auto })));
+  const spellById = id => { for (let i = 0; i < SPELLS.length; i++) if (SPELLS[i].id === id) return SPELLS[i]; return null; };
+
+  // combat-owned state (re-homed from run by F-05: aether = player.mp, wardUntil = player.wardUntil, lastSpell = game.lastSpell)
+  const C = { aether: CFG.maxMP, wardUntil: 0, lastSpell: null };   // one record: numeric fields updated in place (L4)
+  const enemies = [], shots = [], bolts = [];
+  // combat-local scratch (D-10). Valid only inside one combat call.
+  const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3(), camFwd = new THREE.Vector3(), tipPos = new THREE.Vector3();
+  const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion();
+
+  /* ---- enemies ---- */
+  function spawnEnemy() {
+    const n = run.view.toll();
+    const table = n === 1 ? [['wisp', 1]] : n === 2 ? [['wisp', 7], ['shade', 3]] : n === 3 ? [['wisp', 5], ['shade', 3], ['gargoyle', 2]]
+      : n < 6 ? [['wisp', 4], ['shade', 3.5], ['gargoyle', 2.5]] : [['wisp', 3], ['shade', 4], ['gargoyle', 3]];
+    const type = pickWeighted(table), def = ENEMY[type];
+    const spread = [0, 55, 90, 130, 180, 180, 180, 180, 180][Math.min(n, 8)];
+    const yaw = rand(-spread, spread) * DEG;
+    const pitch = (type === 'gargoyle' ? rand(3, 16) : rand(3, 32)) * DEG;
+    const dist = rand(CFG.spawnDist[0], CFG.spawnDist[1]);
+    const pos = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(EYE);
+    const mat = new THREE.SpriteMaterial({ map: TEX[type], transparent: true, depthWrite: false, blending: type === 'wisp' ? THREE.AdditiveBlending : THREE.NormalBlending });
+    const s = new THREE.Sprite(mat); s.position.copy(pos);
+    if (type === 'gargoyle') s.scale.set(def.size * 2, def.size, 1); else s.scale.set(def.size, def.size, 1);
+    scene.stage.attach(s);
+    enemies.push({
+      type, def, s, mat, pos, hp: def.hp, maxHp: def.hp,
+      speed: def.speed * (1 + (n - 1) * 0.05) * rand(0.9, 1.1),
+      phase: rand(0, 6.28), wf: rand(1.2, 2.2), slowUntil: 0, flash: 0, dead: false,
+    });
+  }
+  function damageEnemy(e, dmg, slow, color) {
+    if (e.dead) return;
+    e.hp -= dmg; e.flash = 0.12;
+    if (slow) e.slowUntil = run.view.t() + 3;
+    if (e.hp <= 0) killEnemy(e, color); else audio.play('hit');
+  }
+  // MAP[combat.killEnemy]: reports the base value once per creature (e.dead guards a second call); run applies chain and multiplier and refuses outside play (F-05 #1, D-03). F-04 residual: after an arrival ended the run this tick, the bursts and kill sound still happen; the score cannot change.
+  function killEnemy(e, color) {
+    e.dead = true;
+    scene.burst(e.pos, e.def.tint, 14, 9, 1.4);
+    if (color) scene.burst(e.pos, color, 6, 6, 1.0);
+    run.recordBanish(e.def.score);
+    audio.play('kill');
+  }
+  function removeEnemy(i) {
+    const e = enemies[i]; scene.stage.detach(e.s); e.mat.dispose(); enemies.splice(i, 1);
+  }
+  function updateEnemies(dt) {
+    const t = run.view.t();
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      if (e.dead) { removeEnemy(i); continue; }
+      tmpA.subVectors(EYE, e.pos); const d = tmpA.length(); tmpA.divideScalar(d);
+      const slow = t < e.slowUntil ? 0.42 : 1;
+      e.pos.addScaledVector(tmpA, e.speed * slow * dt);
+      tmpB.set(-tmpA.z, 0, tmpA.x).normalize();
+      e.pos.addScaledVector(tmpB, Math.cos(t * e.wf + e.phase) * e.def.wobble * slow * dt);
+      e.pos.y += Math.sin(t * 2.3 + e.phase) * 0.6 * dt;
+      e.s.position.copy(e.pos);
+      if (e.type === 'gargoyle') e.s.scale.x = e.def.size * 2 * (0.82 + 0.18 * Math.abs(Math.sin(t * 7 + e.phase)));
+      else if (e.type === 'wisp') { const k = e.def.size * (0.92 + 0.08 * Math.sin(t * 9 + e.phase)); e.s.scale.set(k, k, 1); }
+      e.flash -= dt;
+      if (e.flash > 0) e.mat.color.setRGB(2.6, 2.6, 2.6);
+      else if (t < e.slowUntil) e.mat.color.setRGB(0.6, 0.9, 1.5);
+      else e.mat.color.setRGB(1, 1, 1);
+      if (d < CFG.reachDist) reachTower(e);
+    }
+  }
+  // MAP[combat.reachTower]: warded ⇒ banished with score (unchanged). Unwarded ⇒ removed and reported once to run.recordArrival(damage); vitality, chain, shake, red edge, vibration, hurt sound and the end are run's (F-05 #2, #5; D-03, D-04).
+  function reachTower(e) {
+    if (run.view.t() < C.wardUntil) {
+      killEnemy(e, 0xffd56b); scene.burst(e.pos, 0xffd56b, 10, 10, 1.2); return;
+    }
+    e.dead = true;
+    run.recordArrival(e.def.dmg);
+  }
+
+  /* ---- spells and projectiles ---- */
+  const shotMats = {};
+  SPELLS.forEach(s => { shotMats[s.id] = new THREE.SpriteMaterial({ map: TEX.glow, color: s.color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }); });
+
+  // MAP[combat.aimDirection]: reads copies of the camera direction, camera position and wand tip through scene.view into combat-local scratch; tipPos is valid for the rest of this cast only (D-10).
+  function aimDirection(out) {
+    scene.view.cameraDirection(camFwd);
+    scene.view.wandTip(tipPos);
+    tmpA.copy(scene.view.cameraPosition(camPos)).addScaledVector(camFwd, 80);
+    return out.subVectors(tmpA, tipPos).normalize();
+  }
+  function fireShot(spell, dir, opts) {
+    const s = new THREE.Sprite(shotMats[spell.id]); s.scale.set(opts.size, opts.size, 1);
+    s.position.copy(tipPos); scene.stage.attach(s);
+    shots.push({ s, spell, pos: tipPos.clone(), prev: tipPos.clone(), dir: dir.clone(), speed: opts.speed, dmg: opts.dmg, slow: !!opts.slow, homing: opts.homing, radius: opts.radius, life: 1.8, trail: 0 });
+  }
+  // MAP[combat.cast]: refuses outside play (run.view), before the cooldown, and when aether is short (fizzle, meter flash, 0.25 s block). Paying, cooldown, last spell and ward change combat state only; the wand goes through scene.kickWand (F-05 #3, #16).
+  function cast(id) {
+    const spell = spellById(id); if (!spell) return;
+    if (run.view.state() !== 'play') return;
+    const t = run.view.t();
+    if (t < spell.readyAt) return;
+    if (C.aether < spell.cost) { audio.play('fizzle'); hud.flashMana(); spell.readyAt = t + 0.25; return; }
+    C.aether -= spell.cost; spell.readyAt = t + spell.cd;
+    C.lastSpell = spell; scene.kickWand(spell.color);
+    const dir = aimDirection(new THREE.Vector3());
+    switch (spell.id) {
+      // MAP[combat.cast]: holding Emberlance costs 6 aether per 0.22 s (~27/s) against 15/s regen => about 8 s of continuous fire from full. Deliberate pressure, see combat 2B.
+      case 'ember':
+        fireShot(spell, dir, { speed: 72, dmg: 1, homing: 3.2, radius: 0.5, size: 0.9 }); break;
+      case 'rime': {
+        scene.view.cameraQuaternion(camQuat);
+        const right = tmpB.set(1, 0, 0).applyQuaternion(camQuat), up = tmpC.set(0, 1, 0).applyQuaternion(camQuat);
+        [-0.1, -0.05, 0, 0.05, 0.1].forEach((o, i) => {
+          const d = dir.clone().addScaledVector(right, o).addScaledVector(up, (i % 2 ? 0.02 : -0.015)).normalize();
+          fireShot(spell, d, { speed: 56, dmg: 1, slow: true, homing: 1.2, radius: 0.6, size: 0.7 });
+        });
+        break;
+      }
+      case 'arc': castArc(spell); break;
+      case 'ward':
+        C.wardUntil = t + 4.5; scene.burst(EYE.clone().addScaledVector(camFwd, 1.5), spell.color, 18, 4, 0.6); break;
+    }
+    scene.emit(tipPos, spell.color, tmpA.set(0, 0, 0), 0.18, 0.25, 1.5);
+    audio.play(spell.id);
+  }
+  function castArc(spell) {
+    scene.view.cameraDirection(camFwd);
+    scene.view.cameraPosition(camPos);
+    let best = null, bestCos = Math.cos(16 * DEG);
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const c = tmpA.subVectors(e.pos, camPos).normalize().dot(camFwd);
+      if (c > bestCos) { bestCos = c; best = e; }
+    }
+    const pts = [tipPos.clone()];
+    // MAP[combat.castArc] F-08: with no target in the 16-degree cone Skylash still spends 28 aether and flashes (SIDE-EFFECT: UNDECLARED, needs an o2 accept/reject).
+    if (!best) { pts.push(camPos.clone().addScaledVector(camFwd, 45)); }
+    else {
+      const hit = new Set([best]); let cur = best;
+      pts.push(cur.pos.clone()); damageEnemy(cur, 2, false, spell.color);
+      for (let k = 0; k < 3; k++) {
+        let nxt = null, nd = 24;
+        for (const e of enemies) { if (e.dead || hit.has(e)) continue; const d = e.pos.distanceTo(cur.pos); if (d < nd) { nd = d; nxt = e; } }
+        if (!nxt) break;
+        hit.add(nxt); pts.push(nxt.pos.clone()); damageEnemy(nxt, 2, false, spell.color); cur = nxt;
+      }
+    }
+    bolts.push({ pts, life: 0.24, max: 0.24, color: '#e3d2ff' });
+    scene.flashSky(1);
+  }
+  function segDist(a, b, p) {
+    tmpB.subVectors(b, a); tmpC.subVectors(p, a);
+    const l2 = tmpB.lengthSq(), t = l2 > 0 ? clamp(tmpC.dot(tmpB) / l2, 0, 1) : 0;
+    return tmpC.copy(a).addScaledVector(tmpB, t).distanceTo(p);
+  }
+  function updateShots(dt) {
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const p = shots[i];
+      p.life -= dt;
+      // light aim assist: steer toward a creature close to the flight line
+      let target = null, bestCos = Math.cos(9 * DEG);
+      for (const e of enemies) {
+        if (e.dead) continue;
+        const c = tmpA.subVectors(e.pos, p.pos).normalize().dot(p.dir);
+        if (c > bestCos) { bestCos = c; target = e; }
+      }
+      if (target) { tmpA.subVectors(target.pos, p.pos).normalize(); p.dir.lerp(tmpA, Math.min(1, p.homing * dt)).normalize(); }
+      p.prev.copy(p.pos); p.pos.addScaledVector(p.dir, p.speed * dt); p.s.position.copy(p.pos);
+      p.trail -= dt;
+      if (p.trail <= 0) { p.trail = 0.016; scene.emit(p.pos, p.spell.color, tmpA.set(rand(-0.4, 0.4), rand(-0.4, 0.4), rand(-0.4, 0.4)), 0.28, p.s.scale.x * 0.7, -0.5); }
+      let gone = p.life <= 0;
+      if (!gone) for (const e of enemies) {
+        if (e.dead) continue;
+        if (segDist(p.prev, p.pos, e.pos) < e.def.radius + p.radius) {
+          damageEnemy(e, p.dmg, p.slow, p.spell.color);
+          e.pos.addScaledVector(p.dir, 1.2);
+          scene.burst(p.pos, p.spell.color, 6, 5, 0.6);
+          gone = true; break;
+        }
+      }
+      if (gone) { scene.stage.detach(p.s); shots.splice(i, 1); }
+    }
+  }
+  // MAP[combat.updateCasting]: one call per play tick from run.frame: aether regenerates (CFG) and bolts age in game time. Bolts therefore freeze during pause (B1, D-12; F-09 resolved). Same expressions and order as the baseline (regen before the held cast; bolts aged before drawFX draws them).
+  function updateCasting(dt) {
+    C.aether = Math.min(CFG.maxMP, C.aether + CFG.mpRegen * dt);
+    for (let i = bolts.length - 1; i >= 0; i--) { const b = bolts[i]; b.life -= dt; if (b.life <= 0) bolts.splice(i, 1); }
+  }
+  // MAP[combat.resetForRun]: clears creatures (detached through scene.stage, materials disposed), shots, bolts; aether full; ward off; last spell cleared (Q2: baseline reset lastSpell to null); every spell ready. Touches no run state.
+  function resetForRun() {
+    enemies.forEach(e => { scene.stage.detach(e.s); e.mat.dispose(); }); enemies.length = 0;
+    shots.forEach(p => scene.stage.detach(p.s)); shots.length = 0; bolts.length = 0;
+    C.aether = CFG.maxMP; C.wardUntil = 0; C.lastSpell = null;
+    SPELLS.forEach(s => { s.readyAt = 0; });
+  }
+
+  /* ---- read view ---- */
+  // MAP[combat.view]: values, frozen spell records, or one reused record per iteration (copies; never combat's sprites, materials or vectors). No allocation per call. A reader that changes a record changes only its own copy: the next record overwrites it.
+  const creatureRec = { pos: new THREE.Vector3(), type: '', hp: 0, maxHp: 0, size: 0, alive: false };
+  const boltRec = { n: 0, pts: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], life: 0, max: 0, color: '' };
+  const view = Object.freeze({
+    spellCount() { return SPELLS.length; },
+    spell(i) { return SPELL_INFO[i]; },
+    spellById(id) { for (let i = 0; i < SPELL_INFO.length; i++) if (SPELL_INFO[i].id === id) return SPELL_INFO[i]; return null; },
+    spellByKey(key) { for (let i = 0; i < SPELL_INFO.length; i++) if (SPELL_INFO[i].key === key) return SPELL_INFO[i]; return null; },
+    readyAt(i) { return SPELLS[i].readyAt; },
+    aether() { return C.aether; },
+    maxAether() { return CFG.maxMP; },
+    wardUntil() { return C.wardUntil; },
+    lastSpell() { return C.lastSpell ? C.lastSpell.id : null; },
+    creatureCount() { return enemies.length; },
+    forEachCreature(fn) {
+      for (const e of enemies) {
+        creatureRec.pos.copy(e.pos); creatureRec.type = e.type; creatureRec.hp = e.hp; creatureRec.maxHp = e.maxHp; creatureRec.size = e.def.size; creatureRec.alive = !e.dead;
+        fn(creatureRec);
+      }
+    },
+    forEachBolt(fn) {
+      for (let i = bolts.length - 1; i >= 0; i--) {
+        const b = bolts[i];
+        while (boltRec.pts.length < b.pts.length) boltRec.pts.push(new THREE.Vector3());   // never taken: a bolt has at most 5 points
+        boltRec.n = b.pts.length; for (let k = 0; k < b.pts.length; k++) boltRec.pts[k].copy(b.pts[k]);
+        boltRec.life = b.life; boltRec.max = b.max; boltRec.color = b.color;
+        fn(boltRec);
+      }
+    },
+  });
+
+  let wired = false;
+  function wire(runApi, hudApi) {
+    if (wired) throw new Error('combat: already wired'); wired = true;
+    run = runApi; hud = hudApi;
+  }
+  const api = Object.freeze({ cast, updateCasting, updateEnemies, updateShots, spawnEnemy, resetForRun, view });
+  return { api, wire };
+}
+/* @end combat */
+
+/* @module input ========================================================== */
+// LOOK — device orientation (gyro) with drag fallback, plus the view shake. The camera is scene's:
+// input computes the orientation and hands it over with scene.setViewOrientation.
+function makeInput(sys, scene) {
+  const { DEG, clamp } = sys;
+  let runView = null, hud = null;   // wired once by sys.boot
+  const Look = {
+    sensor: false, hasLast: false, last: { a: 0, b: 0, g: 0 }, needRecenter: true, yawOffset: 0,
+    dragYaw: 0, dragPitch: 0, target: new THREE.Quaternion(), shake: 0, prevDt: 0,
+    _euler: new THREE.Euler(), _q0: new THREE.Quaternion(), _q1: new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)),
+    _qy: new THREE.Quaternion(), _fwd: new THREE.Vector3(), _z: new THREE.Vector3(0, 0, 1), _y: new THREE.Vector3(0, 1, 0),
+    _cam: new THREE.Quaternion(), _qs: new THREE.Quaternion(), _x: new THREE.Vector3(1, 0, 0),
+  };
+  function screenAngle() {
+    const a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
+    return a * DEG;
+  }
+  // MAP[input.pushOrientation]: stores the reading (radians); the first reading latches sensor mode. A reading whose alpha and beta are both missing is ignored (game_interface filters those events too).
+  function pushOrientation(a, b, g) {
+    if (a == null && b == null) return;
+    Look.last.a = a || 0; Look.last.b = b || 0; Look.last.g = g || 0; Look.hasLast = true;
+    Look.sensor = true;
+  }
+  function deviceQuat(out) {
+    // Same mapping three.js uses for DeviceOrientationControls: phone screen = camera.
     const { a, b, g } = Look.last;
     Look._euler.set(b, a, -g, 'YXZ');
     out.setFromEuler(Look._euler);
     out.multiply(Look._q1);
+    out.multiply(Look._q0.setFromAxisAngle(Look._z, -screenAngle()));
+    if (Look.needRecenter) {
+      Look._fwd.set(0, 0, -1).applyQuaternion(out);
+      Look.yawOffset = Math.atan2(-Look._fwd.x, -Look._fwd.z);
+      Look.dragYaw = 0; Look.needRecenter = false;
+    }
+    Look._qy.setFromAxisAngle(Look._y, Look.dragYaw - Look.yawOffset);
+    out.premultiply(Look._qy);
+    return out;
   }
-  out.multiply(Look._q0.setFromAxisAngle(Look._z, -screenAngle()));
-  if (Look.needRecenter) {
-    Look._fwd.set(0, 0, -1).applyQuaternion(out);
-    Look.yawOffset = Math.atan2(-Look._fwd.x, -Look._fwd.z);
-    Look.dragYaw = 0; Look.needRecenter = false;
+  function recenter() {
+    Look.needRecenter = true; Look.dragYaw = 0; Look.dragPitch = 0;
+    hud.showToast('Facing forward. New creatures come from here first.', 1600);
   }
-  Look._qy.setFromAxisAngle(Look._y, Look.dragYaw - Look.yawOffset);
-  out.premultiply(Look._qy);
-  return out;
+  function recenterSilent() { Look.needRecenter = true; Look.dragYaw = 0; Look.dragPitch = 0; }
+  // MAP[input.applyDrag]: WHILE a sensor is live, drag only nudges the heading (pitch unchanged); otherwise pitch is clamped to ±1.3 rad. Same arithmetic as the baseline drag handler.
+  function applyDrag(dYaw, dPitch) {
+    Look.dragYaw += dYaw;
+    if (!Look.sensor) Look.dragPitch = clamp(Look.dragPitch + dPitch, -1.3, 1.3);
+  }
+  // MAP[input.shake]: Q1 answered: the baseline arrival SETS the shake (game.shake = 1), so shake(v) sets. shake(0) stops it (used by run.resetGame, O3-05).
+  function shake(v) { Look.shake = v; }
+  // MAP[input.updateLook]: decays the shake with the PREVIOUS tick's dt before using it. Proof (if X ⇒ true): X = nothing writes the shake between the end of one tick and the next updateLook except an event setting it ⇒ the value used each tick equals the baseline's (baseline decayed at the end of the tick, after the arrival's write) (O3-04). The slerp starts from the camera's current, possibly shaken, orientation (read through scene.view), as at baseline.
+  function updateLook(dt, t) {
+    Look.shake = Math.max(0, Look.shake - Look.prevDt * 3); Look.prevDt = dt;
+    if (runView.state() === 'title') {
+      Look.target.setFromEuler(Look._euler.set(0.1 + Math.sin(t * 0.13) * 0.05, -t * 0.045, 0, 'YXZ'));
+    } else if (Look.sensor && Look.hasLast) {
+      deviceQuat(Look.target);
+    } else {
+      Look.target.setFromEuler(Look._euler.set(Look.dragPitch, Look.dragYaw, 0, 'YXZ'));
+    }
+    const q = scene.view.cameraQuaternion(Look._cam);
+    q.slerp(Look.target, 1 - Math.exp(-dt * (Look.sensor ? 22 : 30)));
+    if (Look.shake > 0) {
+      q.multiply(Look._qs.setFromAxisAngle(Look._x, (Math.random() - 0.5) * Look.shake * 0.05));
+      q.multiply(Look._qs.setFromAxisAngle(Look._y, (Math.random() - 0.5) * Look.shake * 0.05));
+    }
+    scene.setViewOrientation(q);
+  }
+  const view = Object.freeze({ mode() { return Look.sensor ? 'sensor' : 'drag'; } });
+
+  let wired = false;
+  function wire(runViewApi, hudApi) {
+    if (wired) throw new Error('input: already wired'); wired = true;
+    runView = runViewApi; hud = hudApi;
+  }
+  const api = Object.freeze({ pushOrientation, applyDrag, shake, recenter, recenterSilent, updateLook, view });
+  return { api, wire };
 }
-function recenter() {
-  Look.needRecenter = true; Look.dragYaw = 0; Look.dragPitch = 0;
-  if (!Look.sensor && IS_TOUCH) {
-    enableMotion();   // a tap here is also a second chance to grant motion access
-    showToast(motionHelp(), 4200);
-    return;
+/* @end input */
+
+/* @module run ============================================================ */
+// GAME STATE, FLOW (tolls, start, end), MAIN LOOP. run.state is private; others read run.view and change it only
+// through the operations below. Lifecycle changes are published to subscribers (run.onLifecycle).
+function makeRun(sys, audio, scene, combat, input) {
+  const { CFG, ROMAN, clamp, rand, store } = sys;
+  let hud = null;   // wired once by sys.boot
+
+  // run.state (private). One record, so numeric fields are updated in place (no boxed number per write, L4).
+  const S = {
+    state: 'title', t: 0, toll: 0, score: 0, best: store.get('starwatch-best', 0),
+    combo: 0, comboT: 0, spawnLeft: 0, spawnTimer: 0, inBreak: false, breakT: 0, held: null, vitality: CFG.maxHP,
+  };
+
+  const listeners = [];
+  let notifying = false;
+  // MAP[run.onLifecycle]: listeners are told once, in registration order, after the transition is committed (state set, HUD commanded). Re-entrancy refused: while `notifying`, every transition below returns with no state change and no notification (CANNOT HAPPEN, V2). Proof (if X ⇒ true): X = every transition function starts with `if (notifying) return` ⇒ no transition starts while listeners of another are being told.
+  function notify(from, to, summary) {
+    notifying = true;
+    try { for (let i = 0; i < listeners.length; i++) listeners[i](from, to, summary); } finally { notifying = false; }
   }
-  showToast('Facing forward. New creatures come from here first.', 1600);
-}
-function updateLook(dt, t) {
-  if (game.state === 'title') {
-    Look.target.setFromEuler(Look._euler.set(0.1 + Math.sin(t * 0.13) * 0.05, -t * 0.045, 0, 'YXZ'));
-  } else if (Look.sensor && (Motion.source === 'sensor' || Look.last)) {
-    deviceQuat(Look.target);
-  } else {
-    Look.target.setFromEuler(Look._euler.set(Look.dragPitch, Look.dragYaw, 0, 'YXZ'));
+  function onLifecycle(fn) { if (typeof fn === 'function') listeners.push(fn); }
+
+  function startToll(n) {
+    S.toll = n; S.inBreak = false;
+    S.spawnLeft = 4 + n * 3; S.spawnTimer = 1.6;
+    if (n > 1) S.vitality = Math.min(CFG.maxHP, S.vitality + CFG.healBetweenTolls);
+    const subs = ['', 'Wisps drift in from the hills', 'Shades join them. They weave as they fly', 'Gargoyles wake. Each takes five hits', 'They come from every side now', 'The bell grows hoarse', 'Halfway to morning', 'The darkest hour', 'Hold on. Dawn is close'];
+    hud.showBanner(`Toll ${ROMAN[n]}`, subs[n] || '');
+    audio.play('bell');
   }
-  camera.quaternion.slerp(Look.target, 1 - Math.exp(-dt * (Look.sensor ? 22 : 30)));
-  if (game.shake > 0) {
-    camera.rotateX((Math.random() - 0.5) * game.shake * 0.05);
-    camera.rotateY((Math.random() - 0.5) * game.shake * 0.05);
+  // MAP[run.resetGame]: leaves spawnLeft/spawnTimer/inBreak/breakT stale. Proof (if X => true): X = every entry into state "play" from title/over goes through run.beginGame -> run.startToll, which re-initialises them. resumeGame only re-enters from "paused".
+  // MAP[run.resetGame]: combat and effects are cleared by their owners (combat.resetForRun, scene.clearEffects). input.shake(0) and scene.flashSky(0) keep the baseline reset of game.shake and game.flash (O3-05, design modification for o2).
+  function resetGame() {
+    combat.resetForRun();
+    scene.clearEffects();
+    S.vitality = CFG.maxHP;
+    S.t = 0; S.toll = 0; S.score = 0; S.combo = 0; S.comboT = 0; S.held = null;
+    input.shake(0); scene.flashSky(0);
   }
-}
-async function enableMotion() {
-  // iOS 13+ asks permission; this must start inside the tap handler.
-  try {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      const r = await DeviceOrientationEvent.requestPermission();
-      if (r !== 'granted') return false;
-      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try { await DeviceMotionEvent.requestPermission(); } catch (e) { /* flick stays off */ }
+  function updateFlow(dt) {
+    if (S.spawnLeft > 0) {
+      S.spawnTimer -= dt;
+      if (S.spawnTimer <= 0) {
+        combat.spawnEnemy(); S.spawnLeft--;
+        S.spawnTimer = Math.max(0.55, 2.2 - S.toll * 0.17) * rand(0.6, 1.4);
       }
+    } else if (!S.inBreak && combat.view.creatureCount() === 0) {
+      if (S.toll >= CFG.tolls) { endGame(true); return; }
+      S.inBreak = true; S.breakT = CFG.breakSeconds;
     }
-  } catch (e) { Motion.reason = 'NotAllowedError'; return false; }
-  listenOrientation();
-  return true;
-}
-const NEEDS_TAP_PERMISSION = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
-const IN_FRAME = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
-const IS_TOUCH = matchMedia('(pointer: coarse)').matches;
-// Plain-language reason motion can't work here, or '' if it should.
-function motionBlocker() {
-  if (IN_FRAME) return 'Motion is blocked while the game sits inside another page. Open it in its own tab to aim by moving the phone.';
-  if (!window.isSecureContext) return 'Phones only share motion with secure pages. Open this game from an https:// address, not http:// or a local file.';
-  if (typeof DeviceOrientationEvent === 'undefined' && !('RelativeOrientationSensor' in window)) return 'This browser has no motion sensor support. Try Chrome or Samsung Internet.';
-  return '';
-}
-function motionHelp() {
-  const b = motionBlocker(); if (b) return b;
-  if (Motion.reason === 'NotAllowedError') return 'Motion access was refused. In Chrome: tap the icon left of the address, open Permissions or Site settings, and allow Motion sensors. Then reload.';
-  return 'No motion readings yet. In Chrome: Settings › Site settings › Motion sensors must be allowed. Drag the view to look meanwhile.';
-}
-function updateMotionChip() {
-  const chip = $('motionChip'); if (!chip) return;
-  const label = { sensor: 'gyroscope', event: 'orientation', absolute: 'compass' }[Motion.source];
-  if (label) { chip.dataset.state = 'on'; chip.textContent = `Motion aiming ready (${label})`; return; }
-  const b = motionBlocker();
-  if (b) { chip.dataset.state = 'off'; chip.textContent = b; }
-  else if (NEEDS_TAP_PERMISSION) { chip.dataset.state = 'wait'; chip.textContent = 'Motion aiming turns on when you begin. Tap Allow when asked.'; }
-  else if (!IS_TOUCH) { chip.dataset.state = 'wait'; chip.textContent = 'No phone detected: drag to look, keys 1–4 to cast.'; }
-  else { chip.dataset.state = 'wait'; chip.textContent = 'Waiting for motion readings… lift the phone.'; }
-}
-// Drag to look (always on: nudges yaw when the gyro is active)
-(function dragLook() {
-  let id = null, lx = 0, ly = 0;
-  view.addEventListener('pointerdown', e => { if (id !== null) return; id = e.pointerId; lx = e.clientX; ly = e.clientY; view.setPointerCapture(id); });
-  view.addEventListener('pointermove', e => {
-    if (e.pointerId !== id || game.state !== 'play') return;
-    const k = 0.0048 * (70 / camera.fov);
-    Look.dragYaw += (e.clientX - lx) * k;
-    if (!Look.sensor) Look.dragPitch = clamp(Look.dragPitch + (e.clientY - ly) * k, -1.3, 1.3);
-    lx = e.clientX; ly = e.clientY;
+    if (S.inBreak) { S.breakT -= dt; if (S.breakT <= 0) startToll(S.toll + 1); }
+  }
+  function beginGame() {
+    if (notifying) return;
+    const from = S.state;
+    resetGame();
+    S.state = 'play';
+    hud.setWatchShown(true);
+    input.recenterSilent();
+    startToll(1);
+    notify(from, 'play');
+  }
+  function endGame(won) {
+    if (notifying || S.state === 'over') return;
+    const from = S.state;
+    S.state = 'over'; S.held = null;
+    const bonus = won ? Math.round(S.vitality * 5) : 0;
+    if (won) S.score += bonus;
+    const newBest = S.score > S.best;
+    if (newBest) { S.best = S.score; store.set('starwatch-best', S.best); }
+    audio.play(won ? 'dawn' : 'hurt');
+    hud.setWatchShown(false);
+    notify(from, 'over', Object.freeze({ won: !!won, score: S.score, toll: S.toll, best: S.best, newBest, bonus }));
+  }
+  function pauseGame() {
+    if (notifying || S.state !== 'play') return;
+    S.state = 'paused'; S.held = null;
+    notify('play', 'paused');
+  }
+  function resumeGame() {
+    if (notifying || S.state !== 'paused') return;
+    S.state = 'play';
+    notify('paused', 'play');
+  }
+  function quitToTitle() {
+    if (notifying || S.state !== 'paused') return;
+    resetGame(); S.held = null;
+    S.state = 'title';
+    hud.setWatchShown(false);
+    notify('paused', 'title');
+  }
+  // MAP[run.setHeldSpell]: records in any state (Q4: the baseline held any spell; only auto-repeat spells are re-cast by run.frame, on play ticks). Cleared by pause, end and quit.
+  function setHeldSpell(id) { S.held = id == null ? null : id; }
+  // MAP[run.recordBanish]: refuses outside play, so the score cannot change after the run is over (closes F-04's tally part; B2). Same chain order and multiplier formula as the baseline combat.killEnemy.
+  function recordBanish(v) {
+    if (S.state !== 'play') return;
+    if (S.comboT > 0) S.combo++; else S.combo = 1;
+    S.comboT = CFG.comboWindow;
+    const mult = Math.min(3, 1 + Math.floor(S.combo / 5) * 0.5);
+    S.score += Math.round(v * mult);
+  }
+  // MAP[run.recordArrival]: refuses outside play (B3). Vitality floored at 0; chain reset; shake, red edge, vibration where supported, hurt sound; endGame(false) once at 0 (endGame plays 'hurt' again, Q6: as at baseline).
+  function recordArrival(d) {
+    if (S.state !== 'play') return;
+    S.vitality = Math.max(0, S.vitality - d);
+    S.combo = 0; S.comboT = 0;
+    input.shake(1);
+    hud.flashHurt();
+    if (navigator.vibrate) { try { navigator.vibrate(90); } catch (err) { /* ignore */ } }
+    audio.play('hurt');
+    if (S.vitality <= 0) endGame(false);
+  }
+
+  /* ---- main loop ---- */
+  const L = { lastT: performance.now(), worldT: 0 };
+  let started = false;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    // MAP[run.frame]: proof dt <= 0.05 s, so a backgrounded tab never jumps the simulation. Below 20 fps game time runs slower than wall time (SIDE-EFFECT: ACCEPTED). state is read once for the play block (see F-04, residual).
+    // MAP[run.frame]: order per the One frame blueprint: updateLook (camera current) → [play: t, updateCasting, held auto cast, updateFlow, updateEnemies, updateShots, chain timer, updateHud] → particles unless paused → ambience → render → drawFX. Writes only run state; everything else goes through its owner (F-05 #15).
+    const dt = Math.min(0.05, (now - L.lastT) / 1000); L.lastT = now; L.worldT += dt;
+    input.updateLook(dt, L.worldT);
+
+    if (S.state === 'play') {
+      S.t += dt;
+      combat.updateCasting(dt);
+      if (S.held) { const sp = combat.view.spellById(S.held); if (sp && sp.auto) combat.cast(S.held); }
+      updateFlow(dt);
+      combat.updateEnemies(dt);
+      combat.updateShots(dt);
+      if (S.comboT > 0) { S.comboT -= dt; if (S.comboT <= 0) S.combo = 0; }
+      hud.updateHud();
+    }
+    if (S.state !== 'paused') scene.updateParticles(dt);
+
+    const dawn = S.state === 'title' ? 0.1 : clamp((S.toll - 1) / (CFG.tolls - 1), 0, 1);
+    scene.updateAmbience(dt, L.worldT, dawn, S.state === 'play' || S.state === 'paused');
+    scene.render();
+    hud.drawFX();
+  }
+  function loopStart() {
+    if (started) return; started = true;
+    requestAnimationFrame(ts => { L.lastT = ts; frame(ts); });
+  }
+
+  /* ---- read view ---- */
+  // MAP[run.view]: primitives only, latest committed values, no allocation. chain() is 0 once the chain window has lapsed (equal to the baseline `comboT > 0 && combo` by the invariant combo > 0 ⇒ comboT > 0).
+  const view = Object.freeze({
+    state() { return S.state; },
+    t() { return S.t; },
+    toll() { return S.toll; },
+    score() { return S.score; },
+    best() { return S.best; },
+    chain() { return S.comboT > 0 ? S.combo : 0; },
+    multiplier() { return Math.min(3, 1 + Math.floor((S.comboT > 0 ? S.combo : 0) / 5) * 0.5); },
+    vitality() { return S.vitality; },
+    maxVitality() { return CFG.maxHP; },
   });
-  const end = e => { if (e.pointerId === id) id = null; };
-  view.addEventListener('pointerup', end); view.addEventListener('pointercancel', end);
-})();
-// Flick to cast
-let lastFlick = 0;
-function onDeviceMotion(e) {
-  if (!settings.flick || game.state !== 'play') return;
-  const a = e.acceleration; if (!a || a.x == null) return;
-  const mag = Math.hypot(a.x, a.y, a.z), now = performance.now();
-  if (mag > CFG.flickThreshold && now - lastFlick > 420) { lastFlick = now; cast(game.lastSpell || SPELLS[0]); }
-}
 
-/* =========================================================================
-   9. GAME STATE
-   ========================================================================= */
-const settings = { flick: store.get('starwatch-flick', false) };
-$('optFlick').checked = settings.flick;
-const game = {
-  state: 'title', t: 0, toll: 0, score: 0, best: store.get('starwatch-best', 0),
-  combo: 0, comboT: 0, spawnLeft: 0, spawnTimer: 0, inBreak: false, breakT: 0,
-  shake: 0, flash: 0, held: null, lastSpell: null,
-};
-const player = { hp: CFG.maxHP, mp: CFG.maxMP, wardUntil: 0 };
-const enemies = [], shots = [], bolts = [];
-const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3(), camFwd = new THREE.Vector3(), tipPos = new THREE.Vector3();
-
-/* =========================================================================
-   10. PARTICLES — pooled additive sprites
-   ========================================================================= */
-const Particles = { pool: [], next: 0 };
-for (let i = 0; i < 280; i++) {
-  const mat = new THREE.SpriteMaterial({ map: TEX.glow, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
-  const s = new THREE.Sprite(mat); s.visible = false; scene.add(s);
-  Particles.pool.push({ s, mat, vel: new THREE.Vector3(), life: 0, max: 1, size: 1, grow: 0 });
-}
-function emit(pos, color, vel, life, size, grow = 0) {
-  const p = Particles.pool[Particles.next]; Particles.next = (Particles.next + 1) % Particles.pool.length;
-  p.s.position.copy(pos); p.vel.copy(vel); p.life = p.max = life; p.size = size; p.grow = grow;
-  p.mat.color.set(color); p.s.visible = true;
-}
-function burst(pos, color, n, speed, size) {
-  for (let i = 0; i < n; i++) {
-    tmpA.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(speed * 0.3, speed));
-    emit(pos, color, tmpA, rand(0.35, 0.8), size * rand(0.6, 1.2), -0.3);
+  let wired = false;
+  function wire(hudApi) {
+    if (wired) throw new Error('run: already wired'); wired = true;
+    hud = hudApi;
   }
+  const api = Object.freeze({ beginGame, pauseGame, resumeGame, quitToTitle, setHeldSpell, recordBanish, recordArrival, loopStart, view, onLifecycle });
+  return { api, wire };
 }
-function updateParticles(dt) {
-  for (const p of Particles.pool) {
-    if (!p.s.visible) continue;
-    p.life -= dt; if (p.life <= 0) { p.s.visible = false; continue; }
-    p.s.position.addScaledVector(p.vel, dt); p.vel.multiplyScalar(1 - 1.8 * dt);
-    const k = p.life / p.max, sc = Math.max(0.01, p.size * (1 + p.grow * (1 - k)));
-    p.s.scale.set(sc, sc, 1); p.mat.opacity = k;
-  }
-}
+/* @end run */
 
-/* =========================================================================
-   11. ENEMIES
-   ========================================================================= */
-function spawnEnemy() {
-  const n = game.toll;
-  const table = n === 1 ? [['wisp', 1]] : n === 2 ? [['wisp', 7], ['shade', 3]] : n === 3 ? [['wisp', 5], ['shade', 3], ['gargoyle', 2]]
-    : n < 6 ? [['wisp', 4], ['shade', 3.5], ['gargoyle', 2.5]] : [['wisp', 3], ['shade', 4], ['gargoyle', 3]];
-  const type = pickWeighted(table), def = ENEMY[type];
-  const spread = [0, 55, 90, 130, 180, 180, 180, 180, 180][Math.min(n, 8)];
-  const yaw = rand(-spread, spread) * DEG;
-  const pitch = (type === 'gargoyle' ? rand(3, 16) : rand(3, 32)) * DEG;
-  const dist = rand(CFG.spawnDist[0], CFG.spawnDist[1]);
-  const pos = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(EYE);
-  const mat = new THREE.SpriteMaterial({ map: TEX[type], transparent: true, depthWrite: false, blending: type === 'wisp' ? THREE.AdditiveBlending : THREE.NormalBlending });
-  const s = new THREE.Sprite(mat); s.position.copy(pos);
-  if (type === 'gargoyle') s.scale.set(def.size * 2, def.size, 1); else s.scale.set(def.size, def.size, 1);
-  scene.add(s);
-  enemies.push({
-    type, def, s, mat, pos, hp: def.hp, maxHp: def.hp,
-    speed: def.speed * (1 + (n - 1) * 0.05) * rand(0.9, 1.1),
-    phase: rand(0, 6.28), wf: rand(1.2, 2.2), slowUntil: 0, flash: 0, dead: false,
+/* @module hud ============================================================ */
+// HUD + FX overlay (arrows, lightning, health pips). hud owns every HUD element, the reticle, vignettes,
+// banner, toast, the spell bar and #fx. It reads run, combat and scene only through their views.
+function makeHud(sys, runView, combatView, sceneView) {
+  const { $, clamp, rand, CFG, EYE, ROMAN } = sys;
+  const ICONS = Object.freeze({
+    ember: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 2.5c2.2 4 6 6.2 6 11a6 6 0 0 1-12 0c0-2.8 1.7-4.3 2.8-6.2.9 1.8 1.9 2.9 3 3.2-1-3-.8-5.6.2-8z"/><path d="M12 21v-4"/></svg>',
+    rime:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/><path d="M9.5 3.8L12 6l2.5-2.2M9.5 20.2L12 18l2.5 2.2M4 10.6l3.3-.6-.9-3.2M20 13.4l-3.3.6.9 3.2M4 13.4l3.3.6-.9 3.2M20 10.6l-3.3-.6.9-3.2"/></svg>',
+    arc:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 2L5 13.2h6L9.8 22l9.2-12.4h-6.2z"/></svg>',
+    ward:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 5.5l5.5 6.5-5.5 6.5L6.5 12z"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>',
   });
-}
-function damageEnemy(e, dmg, slow, color) {
-  if (e.dead) return;
-  e.hp -= dmg; e.flash = 0.12;
-  if (slow) e.slowUntil = game.t + 3;
-  if (e.hp <= 0) killEnemy(e, color); else Sfx.play('hit');
-}
-function killEnemy(e, color) {
-  e.dead = true;
-  burst(e.pos, e.def.tint, 14, 9, 1.4);
-  if (color) burst(e.pos, color, 6, 6, 1.0);
-  if (game.comboT > 0) game.combo++; else game.combo = 1;
-  game.comboT = CFG.comboWindow;
-  const mult = Math.min(3, 1 + Math.floor(game.combo / 5) * 0.5);
-  game.score += Math.round(e.def.score * mult);
-  Sfx.play('kill');
-}
-function removeEnemy(i) {
-  const e = enemies[i]; scene.remove(e.s); e.mat.dispose(); enemies.splice(i, 1);
-}
-function updateEnemies(dt) {
-  const t = game.t;
-  for (let i = enemies.length - 1; i >= 0; i--) {
-    const e = enemies[i];
-    if (e.dead) { removeEnemy(i); continue; }
-    tmpA.subVectors(EYE, e.pos); const d = tmpA.length(); tmpA.divideScalar(d);
-    const slow = t < e.slowUntil ? 0.42 : 1;
-    e.pos.addScaledVector(tmpA, e.speed * slow * dt);
-    tmpB.set(-tmpA.z, 0, tmpA.x).normalize();
-    e.pos.addScaledVector(tmpB, Math.cos(t * e.wf + e.phase) * e.def.wobble * slow * dt);
-    e.pos.y += Math.sin(t * 2.3 + e.phase) * 0.6 * dt;
-    e.s.position.copy(e.pos);
-    if (e.type === 'gargoyle') e.s.scale.x = e.def.size * 2 * (0.82 + 0.18 * Math.abs(Math.sin(t * 7 + e.phase)));
-    else if (e.type === 'wisp') { const k = e.def.size * (0.92 + 0.08 * Math.sin(t * 9 + e.phase)); e.s.scale.set(k, k, 1); }
-    e.flash -= dt;
-    if (e.flash > 0) e.mat.color.setRGB(2.6, 2.6, 2.6);
-    else if (t < e.slowUntil) e.mat.color.setRGB(0.6, 0.9, 1.5);
-    else e.mat.color.setRGB(1, 1, 1);
-    if (d < CFG.reachDist) reachTower(e);
+  const fx = $('fx'), fctx = fx.getContext('2d');
+  let W = 1, H = 1, DPR = 1, safeTop = 80, safeBottom = 120, watchShown = false;
+  // MAP[hud.show]: internal; only hud-owned elements ('hud', 'reticle'). The cards are game_interface's.
+  function show(id, v) { $(id).hidden = !v; }
+  let toastTimer = 0;
+  function showToast(msg, ms = 2600) {
+    const el = $('toast'); el.textContent = msg; el.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, ms);
   }
-}
-function reachTower(e) {
-  if (game.t < player.wardUntil) {
-    killEnemy(e, 0xffd56b); burst(e.pos, 0xffd56b, 10, 10, 1.2); return;
+  let bannerTimer = 0;
+  function showBanner(title, sub) {
+    $('bannerTitle').textContent = title; $('bannerSub').textContent = sub;
+    const b = $('banner'); b.classList.add('show');
+    clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.classList.remove('show'), 2200);
   }
-  e.dead = true;
-  player.hp = Math.max(0, player.hp - e.def.dmg);
-  game.shake = 1; $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 220);
-  if (navigator.vibrate) { try { navigator.vibrate(90); } catch (err) { /* ignore */ } }
-  game.combo = 0; game.comboT = 0;
-  Sfx.play('hurt');
-  if (player.hp <= 0) endGame(false);
-}
+  function flashMana() { const m = $('mpMeter'); m.classList.add('short'); setTimeout(() => m.classList.remove('short'), 300); }
+  // MAP[hud.flashHurt]: the red edge for 220 ms, as the baseline combat.reachTower wrote it (F-05 #5).
+  function flashHurt() { const el = $('hurt'); el.style.opacity = 1; setTimeout(() => { el.style.opacity = 0; }, 220); }
+  function setSoundPressed(on) { $('btnSound').setAttribute('aria-pressed', String(on)); }
 
-/* =========================================================================
-   12. SPELLS & PROJECTILES
-   ========================================================================= */
-const shotMats = {};
-SPELLS.forEach(s => { shotMats[s.id] = new THREE.SpriteMaterial({ map: TEX.glow, color: s.color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }); });
+  // MAP[hud.spellBar]: built once at construction, in combat.view order, with the baseline markup, classes and accessible names; game_interface only subscribes (D-09). setPressed is the "held" look (Q5: classList 'held').
+  const spellButtons = [], buttonById = {};
+  for (let i = 0; i < combatView.spellCount(); i++) {
+    const sp = combatView.spell(i);
+    const b = document.createElement('button');
+    b.className = 'spell'; b.id = 'spell-' + sp.id; b.style.setProperty('--c', sp.css);
+    b.setAttribute('aria-label', `${sp.name}, ${sp.cost} aether`);
+    b.innerHTML = `<span class="key">${sp.key}</span><span class="sigil">${ICONS[sp.id]}</span><span class="nm">${sp.name}</span><span class="cost">${sp.cost} aether</span>`;
+    $('spells').appendChild(b);
+    spellButtons.push(b); buttonById[sp.id] = b;
+  }
+  const spellBar = Object.freeze({
+    setPressed(id, on) { const b = buttonById[id]; if (!b) return; if (on) b.classList.add('held'); else b.classList.remove('held'); },
+  });
+  // MAP[hud.controlHandles]: elements handed to game_interface for subscription only (EX-3). game_interface never changes them (checked by A1).
+  const controlHandles = Object.freeze({
+    recenter() { return $('btnCenter'); },
+    sound() { return $('btnSound'); },
+    pause() { return $('btnPause'); },
+    spell(id) { return buttonById[id] || null; },
+  });
 
-function aimDirection(out) {
-  camera.getWorldDirection(camFwd);
-  Wand.tip.getWorldPosition(tipPos);
-  tmpA.copy(camera.position).addScaledVector(camFwd, 80);
-  return out.subVectors(tmpA, tipPos).normalize();
-}
-function fireShot(spell, dir, opts) {
-  const s = new THREE.Sprite(shotMats[spell.id]); s.scale.set(opts.size, opts.size, 1);
-  s.position.copy(tipPos); scene.add(s);
-  shots.push({ s, spell, pos: tipPos.clone(), prev: tipPos.clone(), dir: dir.clone(), speed: opts.speed, dmg: opts.dmg, slow: !!opts.slow, homing: opts.homing, radius: opts.radius, life: 1.8, trail: 0 });
-}
-function cast(spell) {
-  if (game.state !== 'play') return;
-  if (game.t < spell.readyAt) return;
-  if (player.mp < spell.cost) { Sfx.play('fizzle'); flashMana(); spell.readyAt = game.t + 0.25; return; }
-  player.mp -= spell.cost; spell.readyAt = game.t + spell.cd;
-  game.lastSpell = spell; Wand.kick = 1; Wand.color.set(spell.color); Wand.glow.material.color.set(spell.color);
-  const dir = aimDirection(new THREE.Vector3());
-  switch (spell.id) {
-    case 'ember':
-      fireShot(spell, dir, { speed: 72, dmg: 1, homing: 3.2, radius: 0.5, size: 0.9 }); break;
-    case 'rime': {
-      const right = tmpB.set(1, 0, 0).applyQuaternion(camera.quaternion), up = tmpC.set(0, 1, 0).applyQuaternion(camera.quaternion);
-      [-0.1, -0.05, 0, 0.05, 0.1].forEach((o, i) => {
-        const d = dir.clone().addScaledVector(right, o).addScaledVector(up, (i % 2 ? 0.02 : -0.015)).normalize();
-        fireShot(spell, d, { speed: 56, dmg: 1, slow: true, homing: 1.2, radius: 0.6, size: 0.7 });
-      });
-      break;
-    }
-    case 'arc': castArc(spell); break;
-    case 'ward':
-      player.wardUntil = game.t + 4.5; burst(EYE.clone().addScaledVector(camFwd, 1.5), spell.color, 18, 4, 0.6); break;
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight; DPR = Math.min(window.devicePixelRatio || 1, 2);
+    fx.width = Math.round(W * DPR); fx.height = Math.round(H * DPR); fctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    measureHud();
   }
-  emit(tipPos, spell.color, tmpA.set(0, 0, 0), 0.18, 0.25, 1.5);
-  Sfx.play(spell.id);
-}
-function castArc(spell) {
-  camera.getWorldDirection(camFwd);
-  let best = null, bestCos = Math.cos(16 * DEG);
-  for (const e of enemies) {
-    if (e.dead) continue;
-    const c = tmpA.subVectors(e.pos, camera.position).normalize().dot(camFwd);
-    if (c > bestCos) { bestCos = c; best = e; }
+  function measureHud() {
+    const top = document.querySelector('.top').getBoundingClientRect();
+    const sp = $('spells').getBoundingClientRect();
+    safeTop = (top.height ? top.bottom : 90) + 14;
+    const landscape = W > H && H < 560;
+    safeBottom = landscape ? 26 : (sp.height ? H - sp.top + 14 : 130);
   }
-  const pts = [tipPos.clone()];
-  if (!best) { pts.push(camera.position.clone().addScaledVector(camFwd, 45)); }
-  else {
-    const hit = new Set([best]); let cur = best;
-    pts.push(cur.pos.clone()); damageEnemy(cur, 2, false, spell.color);
-    for (let k = 0; k < 3; k++) {
-      let nxt = null, nd = 24;
-      for (const e of enemies) { if (e.dead || hit.has(e)) continue; const d = e.pos.distanceTo(cur.pos); if (d < nd) { nd = d; nxt = e; } }
-      if (!nxt) break;
-      hit.add(nxt); pts.push(nxt.pos.clone()); damageEnemy(nxt, 2, false, spell.color); cur = nxt;
+
+  let lastHud = { hp: -1, mp: -1, score: -1, toll: -1, combo: '' };
+  // MAP[hud.setWatchShown]: true ⇒ HUD and reticle shown, caches invalidated, then measured with the HUD laid out. false ⇒ hidden and the chain text cleared; while hidden, updateHud writes nothing (B4; F-05 #7, #8).
+  function setWatchShown(on) {
+    if (on) {
+      show('hud', true); show('reticle', true); watchShown = true;
+      lastHud = { hp: -1, mp: -1, score: -1, toll: -1, combo: null };
+      measureHud();
+    } else {
+      show('hud', false); show('reticle', false); watchShown = false;
+      $('combo').textContent = ''; lastHud.combo = '';
     }
   }
-  bolts.push({ pts, life: 0.24, max: 0.24, color: '#e3d2ff' });
-  game.flash = 1;
-}
-function segDist(a, b, p) {
-  tmpB.subVectors(b, a); tmpC.subVectors(p, a);
-  const l2 = tmpB.lengthSq(), t = l2 > 0 ? clamp(tmpC.dot(tmpB) / l2, 0, 1) : 0;
-  return tmpC.copy(a).addScaledVector(tmpB, t).distanceTo(p);
-}
-function updateShots(dt) {
-  for (let i = shots.length - 1; i >= 0; i--) {
-    const p = shots[i];
-    p.life -= dt;
-    // light aim assist: steer toward a creature close to the flight line
-    let target = null, bestCos = Math.cos(9 * DEG);
-    for (const e of enemies) {
-      if (e.dead) continue;
-      const c = tmpA.subVectors(e.pos, p.pos).normalize().dot(p.dir);
-      if (c > bestCos) { bestCos = c; target = e; }
+  // MAP[hud.updateHud]: writes the DOM only when a value changes; nothing while the watch is hidden (so the rest of a tick in which the run ended cannot write the HUD). Reads run.view and combat.view only.
+  function updateHud() {
+    if (!watchShown) return;
+    const hp = Math.round(runView.vitality()), mp = Math.round(combatView.aether());
+    if (hp !== lastHud.hp) { $('hpFill').style.width = (hp / CFG.maxHP * 100) + '%'; lastHud.hp = hp; }
+    if (mp !== lastHud.mp) { $('mpFill').style.width = (mp / CFG.maxMP * 100) + '%'; lastHud.mp = mp; }
+    const score = runView.score(), toll = runView.toll();
+    if (score !== lastHud.score) { $('scoreNum').textContent = score.toLocaleString(); lastHud.score = score; }
+    if (toll !== lastHud.toll) { $('tollNum').textContent = ROMAN[toll] || 'I'; lastHud.toll = toll; }
+    const chain = runView.chain(), mult = runView.multiplier();
+    const combo = chain >= 3 ? `Chain ${chain}${mult > 1 ? ` · ×${mult}` : ''}` : '';
+    if (combo !== lastHud.combo) { $('combo').textContent = combo; lastHud.combo = combo; }
+    const t = runView.t(), aether = combatView.aether();
+    for (let i = 0; i < spellButtons.length; i++) {
+      const sp = combatView.spell(i);
+      const left = Math.max(0, combatView.readyAt(i) - t), frac = sp.cd > 0 ? clamp(left / sp.cd, 0, 1) : 0;
+      const b = spellButtons[i]; b.style.setProperty('--cd', frac.toFixed(3));
+      b.classList.toggle('low', aether < sp.cost);
     }
-    if (target) { tmpA.subVectors(target.pos, p.pos).normalize(); p.dir.lerp(tmpA, Math.min(1, p.homing * dt)).normalize(); }
-    p.prev.copy(p.pos); p.pos.addScaledVector(p.dir, p.speed * dt); p.s.position.copy(p.pos);
-    p.trail -= dt;
-    if (p.trail <= 0) { p.trail = 0.016; emit(p.pos, p.spell.color, tmpA.set(rand(-0.4, 0.4), rand(-0.4, 0.4), rand(-0.4, 0.4)), 0.28, p.s.scale.x * 0.7, -0.5); }
-    let gone = p.life <= 0;
-    if (!gone) for (const e of enemies) {
-      if (e.dead) continue;
-      if (segDist(p.prev, p.pos, e.pos) < e.def.radius + p.radius) {
-        damageEnemy(e, p.dmg, p.slow, p.spell.color);
-        e.pos.addScaledVector(p.dir, 1.2);
-        burst(p.pos, p.spell.color, 6, 5, 0.6);
-        gone = true; break;
-      }
-    }
-    if (gone) { scene.remove(p.s); shots.splice(i, 1); }
+    $('wardGlow').style.opacity = t < combatView.wardUntil() ? (0.55 + 0.25 * Math.sin(t * 6)).toFixed(2) : 0;
   }
-}
 
-/* =========================================================================
-   13. FLOW — tolls (waves), start, end
-   ========================================================================= */
-function startToll(n) {
-  game.toll = n; game.inBreak = false;
-  game.spawnLeft = 4 + n * 3; game.spawnTimer = 1.6;
-  if (n > 1) player.hp = Math.min(CFG.maxHP, player.hp + CFG.healBetweenTolls);
-  const subs = ['', 'Wisps drift in from the hills', 'Shades join them. They weave as they fly', 'Gargoyles wake. Each takes five hits', 'They come from every side now', 'The bell grows hoarse', 'Halfway to morning', 'The darkest hour', 'Hold on. Dawn is close'];
-  showBanner(`Toll ${ROMAN[n]}`, subs[n] || '');
-  Sfx.play('bell');
-}
-function resetGame() {
-  enemies.forEach(e => { scene.remove(e.s); e.mat.dispose(); }); enemies.length = 0;
-  shots.forEach(p => scene.remove(p.s)); shots.length = 0; bolts.length = 0;
-  Particles.pool.forEach(p => { p.s.visible = false; });
-  Object.assign(player, { hp: CFG.maxHP, mp: CFG.maxMP, wardUntil: 0 });
-  Object.assign(game, { t: 0, toll: 0, score: 0, combo: 0, comboT: 0, shake: 0, flash: 0, held: null, lastSpell: null });
-  SPELLS.forEach(s => { s.readyAt = 0; });
-}
-function updateFlow(dt) {
-  if (game.spawnLeft > 0) {
-    game.spawnTimer -= dt;
-    if (game.spawnTimer <= 0) {
-      spawnEnemy(); game.spawnLeft--;
-      game.spawnTimer = Math.max(0.55, 2.2 - game.toll * 0.17) * rand(0.6, 1.4);
-    }
-  } else if (!game.inBreak && enemies.length === 0) {
-    if (game.toll >= CFG.tolls) { endGame(true); return; }
-    game.inBreak = true; game.breakT = CFG.breakSeconds;
+  const ARROW = { wisp: '#7dffd0', shade: '#c4a3ff', gargoyle: '#ff7a5a' };
+  const scr = { x: 0, y: 0 };
+  const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3();   // hud-local scratch (D-10)
+  // MAP[hud.toScreen]: projection read through scene.view into hud-local scratch; same arithmetic as the baseline (view space, then projection).
+  function toScreen(v) {
+    sceneView.toView(v, tmpA);
+    if (tmpA.z > -0.05) return false;
+    sceneView.project(v, tmpA);
+    scr.x = (tmpA.x * 0.5 + 0.5) * W; scr.y = (-tmpA.y * 0.5 + 0.5) * H; return true;
   }
-  if (game.inBreak) { game.breakT -= dt; if (game.breakT <= 0) startToll(game.toll + 1); }
-}
-function beginGame() {
-  resetGame();
-  show('screenStart', false); show('screenEnd', false); show('screenPause', false);
-  show('hud', true); show('reticle', true);
-  game.state = 'play'; recenterSilent();
-  measureHud();
-  startToll(1);
-}
-function recenterSilent() { Look.needRecenter = true; Look.dragYaw = 0; Look.dragPitch = 0; }
-function endGame(won) {
-  if (game.state === 'over') return;
-  game.state = 'over'; game.held = null;
-  if (won) game.score += Math.round(player.hp * 5);
-  if (game.score > game.best) { game.best = game.score; store.set('starwatch-best', game.best); }
-  $('endEyebrow').textContent = won ? 'Eight tolls survived' : `Fell during toll ${ROMAN[game.toll]}`;
-  $('endTitle').textContent = won ? 'Dawn breaks over the spire' : 'The spire has fallen';
-  $('endLede').textContent = won ? `Sunlight drives the last of them back into the hills. Your remaining vitality added ${Math.round(player.hp * 5)} to the tally.`
-    : 'The creatures reached the tower top. Rest, then take the watch again.';
-  $('endScore').textContent = game.score.toLocaleString();
-  $('endToll').textContent = ROMAN[game.toll];
-  $('endBest').textContent = game.best.toLocaleString();
-  Sfx.play(won ? 'dawn' : 'hurt');
-  show('hud', false); show('reticle', false); show('screenEnd', true);
-  $('combo').textContent = '';
-}
-function pauseGame() {
-  if (game.state !== 'play') return;
-  game.state = 'paused'; game.held = null; show('screenPause', true);
-}
-function resumeGame() { if (game.state !== 'paused') return; show('screenPause', false); game.state = 'play'; }
-
-/* =========================================================================
-   14. HUD + FX overlay (arrows, lightning, health pips)
-   ========================================================================= */
-const fx = $('fx'), fctx = fx.getContext('2d');
-let W = 1, H = 1, DPR = 1, safeTop = 80, safeBottom = 120;
-function show(id, v) { $(id).hidden = !v; }
-let toastTimer = 0;
-function showToast(msg, ms = 2600) {
-  const el = $('toast'); el.textContent = msg; el.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, ms);
-}
-let bannerTimer = 0;
-function showBanner(title, sub) {
-  $('bannerTitle').textContent = title; $('bannerSub').textContent = sub;
-  const b = $('banner'); b.classList.add('show');
-  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.classList.remove('show'), 2200);
-}
-function flashMana() { const m = $('mpMeter'); m.classList.add('short'); setTimeout(() => m.classList.remove('short'), 300); }
-
-const spellButtons = SPELLS.map(sp => {
-  const b = document.createElement('button');
-  b.className = 'spell'; b.id = 'spell-' + sp.id; b.style.setProperty('--c', sp.css);
-  b.setAttribute('aria-label', `${sp.name}, ${sp.cost} aether`);
-  b.innerHTML = `<span class="key">${sp.key}</span><span class="sigil">${ICONS[sp.id]}</span><span class="nm">${sp.name}</span><span class="cost">${sp.cost} aether</span>`;
-  b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } Sfx.init(); game.held = sp; b.classList.add('held'); cast(sp); });
-  const up = () => { if (game.held === sp) game.held = null; b.classList.remove('held'); };
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, up));
-  b.addEventListener('contextmenu', e => e.preventDefault());
-  b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cast(sp); } });
-  $('spells').appendChild(b);
-  return b;
-});
-
-function resize() {
-  W = window.innerWidth; H = window.innerHeight; DPR = Math.min(window.devicePixelRatio || 1, 2);
-  renderer.setSize(W, H, false);
-  camera.aspect = W / H; camera.fov = W > H ? 62 : 72; camera.updateProjectionMatrix();
-  fx.width = Math.round(W * DPR); fx.height = Math.round(H * DPR); fctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  measureHud();
-}
-function measureHud() {
-  const top = document.querySelector('.top').getBoundingClientRect();
-  const sp = $('spells').getBoundingClientRect();
-  safeTop = (top.height ? top.bottom : 90) + 14;
-  const landscape = W > H && H < 560;
-  safeBottom = landscape ? 26 : (sp.height ? H - sp.top + 14 : 130);
-}
-
-const ARROW = { wisp: '#7dffd0', shade: '#c4a3ff', gargoyle: '#ff7a5a' };
-const scr = { x: 0, y: 0 };
-function toScreen(v) {
-  tmpA.copy(v).applyMatrix4(camera.matrixWorldInverse);
-  if (tmpA.z > -0.05) return false;
-  tmpA.applyMatrix4(camera.projectionMatrix);
-  scr.x = (tmpA.x * 0.5 + 0.5) * W; scr.y = (-tmpA.y * 0.5 + 0.5) * H; return true;
-}
-function drawFX(dt) {
-  fctx.clearRect(0, 0, W, H);
-  if (game.state !== 'play' && game.state !== 'paused') return;
-  const cx = W / 2, cy = (safeTop + (H - safeBottom)) / 2;
-  const halfW = W / 2 - 22, top = safeTop, bottom = H - safeBottom;
-  for (const e of enemies) {
-    if (e.dead) continue;
+  const FXL = { cx: 0, cy: 0, halfW: 0, top: 0, bottom: 0, t: 0 };   // per-frame layout, updated in place (L4)
+  function drawCreature(e) {
+    if (!e.alive) return;
     const dist = e.pos.distanceTo(EYE);
     // health pips over sturdy creatures
-    if (e.maxHp > 1 && toScreen(tmpB.copy(e.pos).setY(e.pos.y + e.def.size * 0.65))) {
+    if (e.maxHp > 1 && toScreen(tmpB.copy(e.pos).setY(e.pos.y + e.size * 0.65))) {
       const sx = scr.x, sy = scr.y, n = e.maxHp, gap = 7;
       for (let k = 0; k < n; k++) {
         fctx.fillStyle = k < e.hp ? ARROW[e.type] : 'rgba(255,255,255,.18)';
@@ -1126,37 +1310,35 @@ function drawFX(dt) {
       }
     }
     // off-screen arrows
-    const local = tmpC.copy(e.pos).applyMatrix4(camera.matrixWorldInverse);
+    const local = sceneView.toView(e.pos, tmpC);
     let onScreen = false;
     if (local.z < 0) {
-      tmpB.copy(e.pos).project(camera);
+      sceneView.project(e.pos, tmpB);
       const px = (tmpB.x * 0.5 + 0.5) * W, py = (-tmpB.y * 0.5 + 0.5) * H;
-      onScreen = px > 10 && px < W - 10 && py > top && py < bottom;
+      onScreen = px > 10 && px < W - 10 && py > FXL.top && py < FXL.bottom;
     }
-    if (onScreen) continue;
+    if (onScreen) return;
     let dx = local.x, dy = -local.y;
     if (local.z > 0 && Math.hypot(dx, dy) < 1e-3) dy = 1;
     const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
-    const sx = Math.abs(dx) > 1e-4 ? halfW / Math.abs(dx) : 1e9;
-    const sy = dy < 0 ? (cy - top - 8) / -dy : dy > 0 ? (bottom - cy - 8) / dy : 1e9;
-    const s = Math.min(sx, sy), ax = cx + dx * s, ay = cy + dy * s;
+    const sx = Math.abs(dx) > 1e-4 ? FXL.halfW / Math.abs(dx) : 1e9;
+    const sy = dy < 0 ? (FXL.cy - FXL.top - 8) / -dy : dy > 0 ? (FXL.bottom - FXL.cy - 8) / dy : 1e9;
+    const s = Math.min(sx, sy), ax = FXL.cx + dx * s, ay = FXL.cy + dy * s;
     const near = 1 - clamp((dist - 6) / 70, 0, 1), size = 9 + near * 10;
     fctx.save(); fctx.translate(ax, ay); fctx.rotate(Math.atan2(dy, dx));
     fctx.globalAlpha = 0.55 + near * 0.45;
     fctx.fillStyle = ARROW[e.type]; fctx.shadowColor = ARROW[e.type]; fctx.shadowBlur = 10;
     fctx.beginPath(); fctx.moveTo(size, 0); fctx.lineTo(-size * 0.6, size * 0.7); fctx.lineTo(-size * 0.25, 0); fctx.lineTo(-size * 0.6, -size * 0.7); fctx.closePath(); fctx.fill();
     if (dist < 22) {
-      fctx.globalAlpha = 0.5 + 0.5 * Math.sin(game.t * 14);
+      fctx.globalAlpha = 0.5 + 0.5 * Math.sin(FXL.t * 14);
       fctx.strokeStyle = '#ff5a6e'; fctx.lineWidth = 2; fctx.beginPath(); fctx.arc(0, 0, size + 6, 0, Math.PI * 2); fctx.stroke();
     }
     fctx.restore();
   }
-  // lightning
-  for (let i = bolts.length - 1; i >= 0; i--) {
-    const b = bolts[i]; b.life -= dt; if (b.life <= 0) { bolts.splice(i, 1); continue; }
+  function drawBolt(b) {
     const screenPts = [];
-    for (const p of b.pts) { if (toScreen(p)) screenPts.push({ x: scr.x, y: scr.y }); }
-    if (screenPts.length < 2) continue;
+    for (let k = 0; k < b.n; k++) { if (toScreen(b.pts[k])) screenPts.push({ x: scr.x, y: scr.y }); }
+    if (screenPts.length < 2) return;
     fctx.save(); fctx.globalAlpha = b.life / b.max; fctx.strokeStyle = b.color; fctx.shadowColor = '#b48cff'; fctx.shadowBlur = 18; fctx.lineJoin = 'round';
     for (const width of [5, 2]) {
       fctx.lineWidth = width; fctx.beginPath(); fctx.moveTo(screenPts[0].x, screenPts[0].y);
@@ -1172,132 +1354,197 @@ function drawFX(dt) {
     }
     fctx.restore();
   }
-}
-let lastHud = { hp: -1, mp: -1, score: -1, toll: -1, combo: '' };
-function updateHud() {
-  const hp = Math.round(player.hp), mp = Math.round(player.mp);
-  if (hp !== lastHud.hp) { $('hpFill').style.width = (hp / CFG.maxHP * 100) + '%'; lastHud.hp = hp; }
-  if (mp !== lastHud.mp) { $('mpFill').style.width = (mp / CFG.maxMP * 100) + '%'; lastHud.mp = mp; }
-  if (game.score !== lastHud.score) { $('scoreNum').textContent = game.score.toLocaleString(); lastHud.score = game.score; }
-  if (game.toll !== lastHud.toll) { $('tollNum').textContent = ROMAN[game.toll] || 'I'; lastHud.toll = game.toll; }
-  const mult = Math.min(3, 1 + Math.floor(game.combo / 5) * 0.5);
-  const combo = game.comboT > 0 && game.combo >= 3 ? `Chain ${game.combo}${mult > 1 ? ` · ×${mult}` : ''}` : '';
-  if (combo !== lastHud.combo) { $('combo').textContent = combo; lastHud.combo = combo; }
-  SPELLS.forEach((sp, i) => {
-    const left = Math.max(0, sp.readyAt - game.t), frac = sp.cd > 0 ? clamp(left / sp.cd, 0, 1) : 0;
-    const b = spellButtons[i]; b.style.setProperty('--cd', frac.toFixed(3));
-    b.classList.toggle('low', player.mp < sp.cost);
-  });
-  $('wardGlow').style.opacity = game.t < player.wardUntil ? (0.55 + 0.25 * Math.sin(game.t * 6)).toFixed(2) : 0;
-}
-
-/* =========================================================================
-   15. MAIN LOOP
-   ========================================================================= */
-let lastT = performance.now(), worldT = 0;
-function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; worldT += dt;
-  updateLook(dt, worldT);
-  camera.updateMatrixWorld();
-
-  if (game.state === 'play') {
-    game.t += dt;
-    player.mp = Math.min(CFG.maxMP, player.mp + CFG.mpRegen * dt);
-    if (game.held && game.held.auto) cast(game.held);
-    updateFlow(dt);
-    updateEnemies(dt);
-    updateShots(dt);
-    if (game.comboT > 0) { game.comboT -= dt; if (game.comboT <= 0) game.combo = 0; }
-    updateHud();
+  // MAP[hud.drawFX]: draws from read-only data (combat.view records, run.view, scene.view) and changes no other module's state; bolts are aged by combat.updateCasting (F-05 #13; B1).
+  function drawFX() {
+    fctx.clearRect(0, 0, W, H);
+    const st = runView.state();
+    if (st !== 'play' && st !== 'paused') return;
+    FXL.cx = W / 2; FXL.cy = (safeTop + (H - safeBottom)) / 2;
+    FXL.halfW = W / 2 - 22; FXL.top = safeTop; FXL.bottom = H - safeBottom; FXL.t = runView.t();
+    combatView.forEachCreature(drawCreature);
+    // lightning
+    combatView.forEachBolt(drawBolt);
   }
-  if (game.state !== 'paused') updateParticles(dt);
 
-  // ambience
-  game.shake = Math.max(0, game.shake - dt * 3);
-  game.flash = Math.max(0, game.flash - dt * 5);
-  World.hemi.intensity = 0.6 + game.flash * 1.4;
-  const dawn = game.state === 'title' ? 0.1 : clamp((game.toll - 1) / (CFG.tolls - 1), 0, 1);
-  World.dawn.material.opacity += (dawn * 0.5 - World.dawn.material.opacity) * dt;
-  World.starMat.opacity = 0.9 - World.dawn.material.opacity * 0.9;
-  World.torches.forEach(tc => {
-    const f = 0.85 + 0.15 * Math.sin(worldT * 13 + tc.seed) * Math.sin(worldT * 7.3 + tc.seed * 2);
-    tc.light.intensity = 1.3 * f; tc.outer.scale.setScalar(0.62 * f); tc.inner.scale.setScalar(0.3 * f);
+  return Object.freeze({ setWatchShown, flashHurt, flashMana, showBanner, showToast, setSoundPressed, spellBar, resize, updateHud, drawFX, controlHandles });
+}
+/* @end hud */
+
+/* @module game_interface ================================================= */
+// WIRING: every browser event and player gesture enters here and is turned into calls on the owners'
+// operations. game_interface owns the start, pause and end cards, settings, the wake lock and pointer tracking.
+function makeStartCard(sys) {
+  const { $ } = sys;
+  const BLOCKED = Object.freeze({ webgl: 'This browser could not start 3D graphics (WebGL). Try another browser or turn off battery saver.' });
+  // MAP[game_interface.showStartBlocked]: shows the reason on #startNote and disables Begin; called by sys.boot when scene reports 3D unavailable (D-08). Hook for F-01 (out of scope).
+  function showStartBlocked(reason) {
+    $('startNote').textContent = BLOCKED[reason] || String(reason);
+    $('btnBegin').disabled = true;
+  }
+  return Object.freeze({ showStartBlocked });
+}
+function makeGameInterface(sys, startCard, m) {
+  const { $, DEG, ROMAN, store, CFG } = sys;
+  const { audio, scene, combat, input, run, hud } = m;
+  const settings = { flick: store.get('starwatch-flick', false) };
+  $('optFlick').checked = settings.flick;
+
+  // MAP[game_interface.onRunLifecycle]: shows exactly the card for the new state and hides the others; fills the end card from the summary with the baseline wording. Calls no run transition (V2).
+  function onRunLifecycle(from, to, s) {
+    if (to === 'over') {
+      $('endEyebrow').textContent = s.won ? 'Eight tolls survived' : `Fell during toll ${ROMAN[s.toll]}`;
+      $('endTitle').textContent = s.won ? 'Dawn breaks over the spire' : 'The spire has fallen';
+      $('endLede').textContent = s.won ? `Sunlight drives the last of them back into the hills. Your remaining vitality added ${s.bonus} to the tally.`
+        : 'The creatures reached the tower top. Rest, then take the watch again.';
+      $('endScore').textContent = s.score.toLocaleString();
+      $('endToll').textContent = ROMAN[s.toll];
+      $('endBest').textContent = s.best.toLocaleString();
+    }
+    $('screenStart').hidden = to !== 'title';
+    $('screenPause').hidden = to !== 'paused';
+    $('screenEnd').hidden = to !== 'over';
+  }
+  run.onLifecycle(onRunLifecycle);
+
+  function onDeviceOrientation(e) {
+    if (e.alpha == null && e.beta == null) return;
+    input.pushOrientation((e.alpha || 0) * DEG, (e.beta || 0) * DEG, (e.gamma || 0) * DEG);
+  }
+  // Flick to cast
+  let lastFlick = 0;
+  function onDeviceMotion(e) {
+    if (!settings.flick || run.view.state() !== 'play') return;
+    const a = e.acceleration; if (!a || a.x == null) return;
+    const mag = Math.hypot(a.x, a.y, a.z), now = performance.now();
+    if (mag > CFG.flickThreshold && now - lastFlick > 420) { lastFlick = now; combat.cast(combat.view.lastSpell() || combat.view.spell(0).id); }
+  }
+  // MAP[game_interface.enableMotion]: safe to call on every Begin: addEventListener ignores an identical (type, listener, capture) triple, so listeners never stack (proof).
+  async function enableMotion() {
+    // iOS 13+ asks permission; this must start inside the tap handler.
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const r = await DeviceOrientationEvent.requestPermission();
+        if (r !== 'granted') return false;
+        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+          try { await DeviceMotionEvent.requestPermission(); } catch (e) { /* flick stays off */ }
+        }
+      }
+    } catch (e) { return false; }
+    window.addEventListener('deviceorientation', onDeviceOrientation);
+    window.addEventListener('devicemotion', onDeviceMotion);
+    return true;
+  }
+  // Drag to look (always on: nudges yaw when the gyro is active). Subscribes to scene's #view canvas (EX-3).
+  (function dragLook() {
+    const view = scene.view.canvas();
+    let id = null, lx = 0, ly = 0;
+    view.addEventListener('pointerdown', e => { if (id !== null) return; id = e.pointerId; lx = e.clientX; ly = e.clientY; view.setPointerCapture(id); });
+    view.addEventListener('pointermove', e => {
+      if (e.pointerId !== id || run.view.state() !== 'play') return;
+      const k = 0.0048 * (70 / scene.view.fov());
+      input.applyDrag((e.clientX - lx) * k, (e.clientY - ly) * k);
+      lx = e.clientX; ly = e.clientY;
+    });
+    const end = e => { if (e.pointerId === id) id = null; };
+    view.addEventListener('pointerup', end); view.addEventListener('pointercancel', end);
+  })();
+
+  let wakeLock = null;
+  async function keepAwake() {
+    try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { /* not allowed here */ }
+  }
+  function tryFullscreen() {
+    const el = document.documentElement, fn = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (fn && !document.fullscreenElement) { try { const p = fn.call(el, { navigationUI: 'hide' }); if (p && p.catch) p.catch(() => {}); } catch (e) { /* optional */ } }
+  }
+  $('btnBegin').addEventListener('click', async () => {
+    const motion = enableMotion();   // starts the iOS permission prompt inside the tap
+    audio.init(); tryFullscreen(); keepAwake();
+    const ok = await motion;
+    run.beginGame();
+    setTimeout(() => {
+      if (run.view.state() !== 'play') return;
+      // MAP[game_interface.onBegin]: the toast is the only place the player learns which look mode is active (CJ-01 step 6). Look mode read through input.view.
+      if (input.view.mode() !== 'sensor') hud.showToast(ok ? 'No motion readings yet. Drag the view to look around.' : 'Motion access is off. Drag the view to look around.', 3600);
+      else hud.showToast('Turn with the phone to look. Recenter any time with the compass button.', 3000);
+    }, 1300);
   });
-  Wand.kick = Math.max(0, Wand.kick - dt * 6);
-  Wand.group.position.z = -0.5 + Wand.kick * 0.05;
-  Wand.group.rotation.x = Wand.kick * 0.12;
-  Wand.group.visible = game.state === 'play' || game.state === 'paused';
-  const g = 0.055 + Wand.kick * 0.08 + Math.sin(worldT * 5) * 0.006; Wand.glow.scale.set(g, g, 1);
+  $('optFlick').addEventListener('change', e => { settings.flick = e.target.checked; store.set('starwatch-flick', settings.flick); });
+  hud.controlHandles.recenter().addEventListener('click', () => input.recenter());
+  hud.controlHandles.pause().addEventListener('click', () => run.pauseGame());
+  $('btnResume').addEventListener('click', () => run.resumeGame());
+  // MAP[game_interface.onQuit]: one call; run performs the quit transition, the start card follows the notification (F-05 #10).
+  $('btnQuit').addEventListener('click', () => run.quitToTitle());
+  $('btnAgain').addEventListener('click', () => { audio.init(); keepAwake(); run.beginGame(); });
+  const sndBtn = hud.controlHandles.sound();
+  hud.setSoundPressed(audio.isOn());
+  sndBtn.addEventListener('click', () => { audio.init(); audio.setOn(!audio.isOn()); hud.setSoundPressed(audio.isOn()); });
 
-  renderer.render(scene, camera);
-  drawFX(dt);
+  // Spell buttons: built by hud; game_interface subscribes (EX-3).
+  // MAP[game_interface.spellButtons]: release clears the held spell only if this button set it last (heldId), which is exactly the baseline rule `if (game.held === sp) game.held = null` (O3-06; multi-touch preserved).
+  let heldId = null;
+  for (let i = 0; i < combat.view.spellCount(); i++) {
+    const sp = combat.view.spell(i), b = hud.controlHandles.spell(sp.id);
+    b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } audio.init(); heldId = sp.id; run.setHeldSpell(sp.id); hud.spellBar.setPressed(sp.id, true); combat.cast(sp.id); });
+    const up = () => { if (heldId === sp.id) { heldId = null; run.setHeldSpell(null); } hud.spellBar.setPressed(sp.id, false); };
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, up));
+    b.addEventListener('contextmenu', e => e.preventDefault());
+    b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); combat.cast(sp.id); } });
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.repeat && e.key !== '1') return;
+    const sp = combat.view.spellByKey(e.key);
+    if (sp) { audio.init(); combat.cast(sp.id); }
+    else if (e.key === ' ' && run.view.state() === 'play') { e.preventDefault(); combat.cast(combat.view.lastSpell() || combat.view.spell(0).id); }
+    // MAP[game_interface.keyboard] F-10: Esc also exits fullscreen (the browser does this, unpreventably) and nothing requests it again. Esc is not user activation, so only a click handler could re-request.
+    else if (e.key === 'Escape' || e.key === 'p') { run.view.state() === 'play' ? run.pauseGame() : run.resumeGame(); }
+    // MAP[game_interface.keyboard] F-06: 'c' recenters and shows the toast in every state, including title and end screens (SIDE-EFFECT: UNDECLARED, minor).
+    else if (e.key === 'c') input.recenter();
+  });
+  // MAP[game_interface.onVisibilityChange] F-03: hidden => pauseGame => state 'paused'; on return state != 'play' so keepAwake is skipped, and resumeGame never calls it => the screen wake lock is lost for the rest of the run (missing SHOULD RESULT).
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) run.pauseGame(); else if (run.view.state() === 'play') keepAwake();
+  });
+  // MAP[game_interface.onResize]: scene and overlay are sized in the same handler, on resize, on orientationchange after 250 ms, and once now, before the first frame (D-07; V7).
+  function onResize() { scene.resize(); hud.resize(); }
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', () => setTimeout(onResize, 250));
+  onResize();
+
+  return Object.freeze({ showStartBlocked: startCard.showStartBlocked });
 }
+/* @end game_interface */
 
-/* =========================================================================
-   16. WIRING
-   ========================================================================= */
-let wakeLock = null;
-async function keepAwake() {
-  try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { /* not allowed here */ }
+/* @module boot =========================================================== */
+// MAP[sys.boot]: composition root. Supplier-first order; each module sees only frozen APIs; the four wire()
+// functions are one-shot (a second call throws) and are unreachable once boot() returns. Nothing goes onto
+// window, except the test hook below, which exists only with ?f05test=1 and exposes the same frozen APIs.
+// IF scene reports 3D unavailable ⇒ only the start card's showStartBlocked runs; nothing else is wired (baseline: Sound and keyboard stay unwired).
+function boot() {
+  const sys = makeSys();
+  const audio = makeAudio(sys);
+  const startCard = makeStartCard(sys);
+  const sceneMod = makeScene(sys);
+  if (sceneMod.unavailable) { startCard.showStartBlocked(sceneMod.unavailable); return; }
+  const scene = sceneMod.api;
+  const combatMod = makeCombat(sys, audio, scene), combat = combatMod.api;
+  const inputMod = makeInput(sys, scene), input = inputMod.api;
+  const runMod = makeRun(sys, audio, scene, combat, input), run = runMod.api;
+  const hud = makeHud(sys, run.view, combat.view, scene.view);
+  sceneMod.wire(combat.view);
+  combatMod.wire(run, hud);
+  inputMod.wire(run.view, hud);
+  runMod.wire(hud);
+  const gameInterface = makeGameInterface(sys, startCard, { audio, scene, combat, input, run, hud });
+  if (/[?&]f05test=1(&|$)/.test(location.search)) {
+    Object.defineProperty(window, '__starwatchF05', { value: Object.freeze({ sys, audio, scene, combat, input, run, hud, gameInterface }), enumerable: false });
+  }
+  run.loopStart();
 }
-function tryFullscreen() {
-  const el = document.documentElement, fn = el.requestFullscreen || el.webkitRequestFullscreen;
-  if (fn && !document.fullscreenElement) { try { const p = fn.call(el, { navigationUI: 'hide' }); if (p && p.catch) p.catch(() => {}); } catch (e) { /* optional */ } }
-}
-$('btnBegin').addEventListener('click', async () => {
-  const motion = enableMotion();   // starts the iOS permission prompt inside the tap
-  Sfx.init(); tryFullscreen(); keepAwake();
-  const ok = await motion;
-  beginGame();
-  setTimeout(() => {
-    if (game.state !== 'play') return;
-    if (!Look.sensor) { if (!ok) Motion.reason = Motion.reason || 'NotAllowedError'; showToast(IS_TOUCH ? motionHelp() : 'Drag to look around. Keys 1–4 cast spells.', 5200); }
-    else showToast('Turn with the phone to look. Recenter any time with the compass button.', 3000);
-  }, 1600);
-});
-$('optFlick').addEventListener('change', e => { settings.flick = e.target.checked; store.set('starwatch-flick', settings.flick); });
-$('btnCenter').addEventListener('click', recenter);
-$('btnPause').addEventListener('click', pauseGame);
-$('btnResume').addEventListener('click', resumeGame);
-$('btnQuit').addEventListener('click', () => {
-  resetGame(); game.state = 'title';
-  show('screenPause', false); show('hud', false); show('reticle', false); show('screenStart', true);
-  $('combo').textContent = '';
-});
-$('btnAgain').addEventListener('click', () => { Sfx.init(); keepAwake(); beginGame(); });
-const sndBtn = $('btnSound');
-sndBtn.setAttribute('aria-pressed', String(Sfx.on));
-sndBtn.addEventListener('click', () => { Sfx.init(); Sfx.setOn(!Sfx.on); sndBtn.setAttribute('aria-pressed', String(Sfx.on)); });
-
-window.addEventListener('keydown', e => {
-  if (e.repeat && e.key !== '1') return;
-  const sp = SPELLS.find(s => s.key === e.key);
-  if (sp) { Sfx.init(); cast(sp); }
-  else if (e.key === ' ' && game.state === 'play') { e.preventDefault(); cast(game.lastSpell || SPELLS[0]); }
-  else if (e.key === 'Escape' || e.key === 'p') { game.state === 'play' ? pauseGame() : resumeGame(); }
-  else if (e.key === 'c') recenter();
-});
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) pauseGame(); else if (game.state === 'play') keepAwake();
-});
-window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 250));
-
-// Android needs no tap to share motion, so start listening now and show the result on the start screen.
-if (!NEEDS_TAP_PERMISSION && !motionBlocker()) listenOrientation();
-// Framed (e.g. a preview): offer the same page as a top-level tab, where the browser allows sensors.
-if (IN_FRAME && /^https:/.test(location.href)) { const a = $('openTab'); a.href = location.href.split('#')[0]; a.hidden = false; }
-updateMotionChip();
-setTimeout(() => {
-  if (Motion.source !== 'none' || NEEDS_TAP_PERMISSION || !IS_TOUCH) return;
-  const chip = $('motionChip'); chip.dataset.state = 'off'; chip.textContent = motionHelp();
-}, 2500);
-
-resize();
-requestAnimationFrame(t => { lastT = t; frame(t); });
+boot();
+/* @end boot */
 })();
 </script>
 
-</body>
-</html>
+</body></html>
